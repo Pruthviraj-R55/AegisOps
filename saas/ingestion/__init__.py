@@ -1,0 +1,1 @@
+"""Authenticated, idempotent telemetry ingestion."""

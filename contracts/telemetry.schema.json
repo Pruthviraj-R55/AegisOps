@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aegisops.example/contracts/telemetry.schema.json",
+  "title": "AEGISOPS Approved Outbound Telemetry Metadata",
+  "description": "Allow-listed metadata crossing from a customer collector to AEGISOPS SaaS. Never embed raw events or log text.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "payload_id",
+    "tenant_id",
+    "collector_id",
+    "event_time",
+    "service",
+    "environment",
+    "metrics",
+    "security",
+    "health"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "payload_id": { "type": "string", "format": "uuid" },
+    "tenant_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "collector_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "event_time": { "type": "string", "format": "date-time", "description": "Source event/aggregation time in UTC; use Z offset." },
+    "service": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "environment": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "region": { "type": ["string", "null"], "maxLength": 128 },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpu_percent": { "$ref": "#/$defs/percentage" },
+        "memory_percent": { "$ref": "#/$defs/percentage" },
+        "disk_percent": { "$ref": "#/$defs/percentage" },
+        "bandwidth_mbps": { "type": "number", "minimum": 0 },
+        "latency_ms": { "type": "number", "minimum": 0 },
+        "packet_loss_percent": { "$ref": "#/$defs/percentage" }
+      },
+      "minProperties": 1
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "failed_login_count": { "type": "integer", "minimum": 0 },
+        "suspicious_activity_count": { "type": "integer", "minimum": 0 }
+      },
+      "minProperties": 1
+    },
+    "health": { "enum": ["excellent", "good", "fair", "poor"] }
+  },
+  "$defs": {
+    "percentage": { "type": "number", "minimum": 0, "maximum": 100 }
+  }
+}
