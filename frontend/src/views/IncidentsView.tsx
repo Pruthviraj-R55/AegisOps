@@ -1,363 +1,140 @@
 import React from 'react';
-import {
-  AlertTriangle,
-  CheckCircle,
-  History,
-  RotateCcw,
-  Zap,
-} from 'lucide-react';
-import { IncidentItem } from '../types/saas';
-import { StatusBadge } from '../components/StatusBadge';
-
-interface AuditLogEntry {
-  id: string;
-  timestamp: string; // UTC ISO
-  operator: string;
-  incidentId: string;
-  service: string;
-  action: string;
-  status: 'approved' | 'rejected' | 'rolled_back' | 'policy_verified';
-  note: string;
-}
+import { AlertTriangle, Info, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react';
+import { SaasApiError, SaasClient } from '../api/client';
+import type { IncidentAnalysisResponse, IncidentEvidence, IncidentItem } from '../types/saas';
 
 interface IncidentsViewProps {
   incidents: IncidentItem[];
+  dataAvailable: boolean;
+  client: SaasClient;
   isLoading: boolean;
+  isStale: boolean;
 }
 
-export const IncidentsView: React.FC<IncidentsViewProps> = ({ incidents }) => {
-  const [selectedIncidentId, setSelectedIncidentId] = React.useState<string | null>(null);
-  const [filterStatus, setFilterStatus] = React.useState<string>('all');
-  const [auditLog, setAuditLog] = React.useState<AuditLogEntry[]>([
-    {
-      id: 'audit-001',
-      timestamp: new Date(Date.now() - 360000).toISOString(),
-      operator: 'sre-lead@aegisops.internal',
-      incidentId: 'inc-init-check',
-      service: 'fleet-controller',
-      action: 'Automated pre-flight security rule verification',
-      status: 'policy_verified',
-      note: 'Verified Zero-Data-Egress policy and contract conformance',
-    },
-  ]);
-  const [remediationState, setRemediationState] = React.useState<
-    Record<string, 'pending' | 'approved' | 'rejected' | 'rolled_back'>
-  >({});
+function timestamp(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 'Invalid timestamp' : `${date.toLocaleString(undefined, { timeZone: 'UTC', hour12: false })} UTC`;
+}
 
-  const filteredIncidents = incidents.filter((i) => {
-    if (filterStatus === 'all') return true;
-    return i.status.toLowerCase() === filterStatus.toLowerCase();
-  });
+export const IncidentsView: React.FC<IncidentsViewProps> = ({ incidents, dataAvailable, client, isLoading, isStale }) => {
+  const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [evidence, setEvidence] = React.useState<IncidentEvidence[]>([]);
+  const [loadingEvidence, setLoadingEvidence] = React.useState(false);
+  const [evidenceError, setEvidenceError] = React.useState<string | null>(null);
+  const [analysis, setAnalysis] = React.useState<IncidentAnalysisResponse | null>(null);
+  const [analysisLoading, setAnalysisLoading] = React.useState(false);
+  const [analysisError, setAnalysisError] = React.useState<string | null>(null);
+  const [retryingAnalysis, setRetryingAnalysis] = React.useState(false);
+  const [severityFilter, setSeverityFilter] = React.useState('all');
+  const [statusFilter, setStatusFilter] = React.useState('all');
+  const filteredIncidents = incidents.filter((incident) =>
+    (severityFilter === 'all' || incident.severity === severityFilter)
+    && (statusFilter === 'all' || incident.status === statusFilter));
+  const selected = filteredIncidents.find((incident) => incident.incident_id === selectedId) || filteredIncidents[0] || null;
+  const visibleSelected = selected;
 
-  const selectedIncident =
-    filteredIncidents.find((i) => i.incident_id === selectedIncidentId) ||
-    filteredIncidents[0] ||
-    null;
+  React.useEffect(() => {
+    let active = true;
+    if (!selected || !dataAvailable) {
+      setEvidence([]);
+      setAnalysis(null);
+      return () => { active = false; };
+    }
+    setSelectedId(selected.incident_id);
+    setLoadingEvidence(true);
+    setAnalysisLoading(true);
+    setEvidenceError(null);
+    setAnalysisError(null);
+    void Promise.allSettled([
+      client.getIncidentEvidence(selected.incident_id),
+      client.getIncidentAnalysis(selected.incident_id),
+    ]).then(([evidenceResult, analysisResult]) => {
+      if (!active) return;
+      if (evidenceResult.status === 'fulfilled') setEvidence(evidenceResult.value.items);
+      else {
+        setEvidence([]);
+        setEvidenceError(evidenceResult.reason instanceof SaasApiError && evidenceResult.reason.status === 404
+          ? 'The incident or its evidence is no longer available for this tenant.'
+          : 'Incident evidence could not be loaded.');
+      }
+      if (analysisResult.status === 'fulfilled') setAnalysis(analysisResult.value);
+      else setAnalysisError('Advisory analysis could not be loaded from the SaaS API.');
+    }).finally(() => {
+      if (active) { setLoadingEvidence(false); setAnalysisLoading(false); }
+    });
+    return () => { active = false; };
+  }, [client, selected?.incident_id, dataAvailable]);
 
-  const currentRemediationStatus = selectedIncident
-    ? remediationState[selectedIncident.incident_id] || 'pending'
-    : 'pending';
-
-  const handleApprove = (incident: IncidentItem) => {
-    const nowIso = new Date().toISOString();
-    setRemediationState((prev) => ({ ...prev, [incident.incident_id]: 'approved' }));
-    setAuditLog((prev) => [
-      {
-        id: `audit-${Date.now()}`,
-        timestamp: nowIso,
-        operator: 'sre-oncall@aegisops.internal',
-        incidentId: incident.incident_id,
-        service: incident.service,
-        action: `Approved: ${incident.recommended_action}`,
-        status: 'approved',
-        note: 'Human-in-the-loop approval recorded in session audit log',
-      },
-      ...prev,
-    ]);
+  const retryAnalysis = async () => {
+    if (!selected) return;
+    setRetryingAnalysis(true);
+    setAnalysisError(null);
+    try {
+      const pending = await client.retryIncidentAnalysis(selected.incident_id);
+      setAnalysis(pending);
+      const refreshed = await client.getIncidentAnalysis(selected.incident_id);
+      setAnalysis(refreshed);
+    } catch (error) {
+      setAnalysisError(error instanceof SaasApiError ? error.detail : 'Analysis retry could not be requested.');
+    } finally { setRetryingAnalysis(false); }
   };
 
-  const handleReject = (incident: IncidentItem) => {
-    const nowIso = new Date().toISOString();
-    setRemediationState((prev) => ({ ...prev, [incident.incident_id]: 'rejected' }));
-    setAuditLog((prev) => [
-      {
-        id: `audit-${Date.now()}`,
-        timestamp: nowIso,
-        operator: 'sre-oncall@aegisops.internal',
-        incidentId: incident.incident_id,
-        service: incident.service,
-        action: 'Operator rejected recommended action',
-        status: 'rejected',
-        note: 'Remediation rejected by human supervisor',
-      },
-      ...prev,
-    ]);
-  };
-
-  const handleRollback = (incident: IncidentItem) => {
-    const nowIso = new Date().toISOString();
-    setRemediationState((prev) => ({ ...prev, [incident.incident_id]: 'rolled_back' }));
-    setAuditLog((prev) => [
-      {
-        id: `audit-${Date.now()}`,
-        timestamp: nowIso,
-        operator: 'sre-oncall@aegisops.internal',
-        incidentId: incident.incident_id,
-        service: incident.service,
-        action: `Triggered Rollback: ${incident.rollback_plan}`,
-        status: 'rolled_back',
-        note: 'Rollback initiated to previous stable state',
-      },
-      ...prev,
-    ]);
+  const refreshAnalysis = async () => {
+    if (!selected) return;
+    setAnalysisLoading(true);
+    setAnalysisError(null);
+    try { setAnalysis(await client.getIncidentAnalysis(selected.incident_id)); }
+    catch { setAnalysisError('Advisory analysis could not be refreshed from the SaaS API.'); }
+    finally { setAnalysisLoading(false); }
   };
 
   return (
     <div className="space-y-6">
-      {/* Top Filter Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-lg border border-border bg-surface shadow-card">
-        <div className="flex items-center gap-2">
-          <AlertTriangle className="h-4 w-4 text-[#B7791F]" />
-          <h2 className="text-sm font-semibold text-text-primary">
-            AIOps Correlated Incidents & Safe Remediation
-          </h2>
-          <span className="text-xs text-text-muted font-mono">
-            ({filteredIncidents.length} shown)
-          </span>
-        </div>
-
-        {/* Filter Pills */}
-        <div className="flex items-center gap-1.5 bg-surface-secondary p-1 rounded-md border border-border text-xs font-mono">
-          {['all', 'active', 'investigating', 'resolved'].map((st) => (
-            <button
-              key={st}
-              onClick={() => setFilterStatus(st)}
-              className={`px-2.5 py-1 rounded capitalize transition-colors ${
-                filterStatus === st
-                  ? 'bg-surface text-accent font-semibold shadow-xs'
-                  : 'text-text-secondary hover:text-text-primary'
-              }`}
-            >
-              {st}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {filteredIncidents.length === 0 ? (
-        <div className="rounded-lg border border-border bg-surface p-12 text-center text-text-muted text-xs">
-          No incidents matching the selected filter.
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left Column: Incidents List */}
-          <div className="lg:col-span-1 rounded-lg border border-border bg-surface shadow-card overflow-hidden divide-y divide-border-subtle max-h-[700px] overflow-y-auto">
-            {filteredIncidents.map((inc) => {
-              const isSelected = selectedIncident?.incident_id === inc.incident_id;
-              return (
-                <div
-                  key={inc.incident_id}
-                  onClick={() => setSelectedIncidentId(inc.incident_id)}
-                  className={`p-3.5 cursor-pointer transition-colors ${
-                    isSelected
-                      ? 'bg-accent-light/50 border-l-3 border-accent'
-                      : 'hover:bg-surface-hover/60'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-mono text-xs font-bold text-text-primary">
-                      {inc.service}
-                    </span>
-                    <StatusBadge status={inc.severity} />
-                  </div>
-
-                  <div className="flex items-center justify-between text-[11px] font-mono text-text-muted">
-                    <span>{inc.incident_id}</span>
-                    <span>{inc.started_at.slice(11, 19)} UTC</span>
-                  </div>
-
-                  <div className="mt-2 flex items-center justify-between text-[11px]">
-                    <span className="text-text-secondary">Confidence:</span>
-                    <span className="font-mono font-bold text-text-primary">
-                      {Math.round(inc.confidence * 100)}%
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Right Column: Incident Detail & Safe Remediation */}
-          {selectedIncident && (
-            <div className="lg:col-span-2 space-y-4">
-              {/* Incident Overview Card */}
-              <div className="rounded-lg border border-border bg-surface p-5 shadow-card">
-                <div className="flex flex-wrap items-center justify-between gap-3 pb-3 mb-4 border-b border-border-subtle">
-                  <div>
-                    <span className="text-[11px] font-mono text-text-muted block">
-                      Incident ID: {selectedIncident.incident_id}
-                    </span>
-                    <h3 className="text-base font-bold text-text-primary flex items-center gap-2 mt-0.5">
-                      <span>{selectedIncident.service} Service Incident</span>
-                      <StatusBadge status={selectedIncident.severity} />
-                      <StatusBadge status={selectedIncident.status} />
-                    </h3>
-                  </div>
-
-                  <div className="text-right text-[11px] font-mono text-text-muted">
-                    <div>Started: {selectedIncident.started_at.slice(11, 19)} UTC</div>
-                    <div>Last seen: {selectedIncident.last_seen_at.slice(11, 19)} UTC</div>
-                  </div>
-                </div>
-
-                {/* Contributing Signals */}
-                <div className="mb-4">
-                  <span className="text-xs font-semibold text-text-secondary block mb-1.5">
-                    Contributing Telemetry Signals:
-                  </span>
-                  <div className="flex flex-wrap gap-2">
-                    {selectedIncident.contributing_signals.map((sig, idx) => (
-                      <span
-                        key={idx}
-                        className="px-2.5 py-1 rounded bg-surface-secondary border border-border text-xs font-mono text-text-primary"
-                      >
-                        {sig}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Confidence Bar */}
-                <div className="mb-4">
-                  <div className="flex items-center justify-between text-xs font-medium mb-1">
-                    <span className="text-text-secondary">AIOps Detection Confidence</span>
-                    <span className="font-mono font-bold text-text-primary">
-                      {Math.round(selectedIncident.confidence * 100)}%
-                    </span>
-                  </div>
-                  <div className="w-full h-2 rounded-full bg-surface-secondary border border-border-subtle overflow-hidden">
-                    <div
-                      className="h-full rounded-full bg-accent"
-                      style={{ width: `${selectedIncident.confidence * 100}%` }}
-                    />
-                  </div>
-                </div>
-
-                {/* Plain-Language Explanation */}
-                <div className="p-3.5 rounded bg-surface-secondary border border-border-subtle text-xs mb-4">
-                  <div className="font-semibold text-text-primary mb-1 flex items-center gap-1.5">
-                    <Zap className="h-3.5 w-3.5 text-accent" />
-                    <span>Explainable Root Cause Diagnosis:</span>
-                  </div>
-                  <p className="text-text-secondary leading-relaxed">
-                    Correlated telemetry detected sustained metric deviations beyond normal baseline thresholds.
-                    Elevated latency coincides with resource saturation without violating tenant privacy boundaries.
-                  </p>
-                </div>
-
-                {/* Safe Remediation Section */}
-                <div className="pt-3 border-t border-border-subtle">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-xs font-bold uppercase tracking-wider text-text-primary">
-                      Safe Remediation & Human-in-the-Loop Controls
-                    </span>
-                    <span
-                      className={`text-xs font-mono font-bold px-2 py-0.5 rounded ${
-                        currentRemediationStatus === 'approved'
-                          ? 'bg-[#EAF5F0] text-[#23865B]'
-                          : currentRemediationStatus === 'rolled_back'
-                          ? 'bg-[#FEF7EC] text-[#B7791F]'
-                          : currentRemediationStatus === 'rejected'
-                          ? 'bg-[#FDF2F2] text-[#C2414B]'
-                          : 'bg-surface-secondary text-text-muted border border-border'
-                      }`}
-                    >
-                      Status: {currentRemediationStatus.toUpperCase()}
-                    </span>
-                  </div>
-
-                  <div className="space-y-3 mb-4">
-                    <div className="p-3 rounded border border-border bg-surface text-xs font-mono">
-                      <span className="text-text-muted block text-[10px] uppercase font-sans">
-                        Recommended Action:
-                      </span>
-                      <span className="text-text-primary font-semibold">
-                        {selectedIncident.recommended_action}
-                      </span>
-                    </div>
-
-                    <div className="p-3 rounded border border-border bg-surface text-xs font-mono">
-                      <span className="text-text-muted block text-[10px] uppercase font-sans">
-                        Automated Rollback Plan:
-                      </span>
-                      <span className="text-text-secondary">
-                        {selectedIncident.rollback_plan}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      onClick={() => handleApprove(selectedIncident)}
-                      disabled={currentRemediationStatus === 'approved'}
-                      className="flex items-center gap-1.5 px-3.5 py-1.5 rounded bg-accent hover:bg-accent-hover text-white text-xs font-medium transition-colors disabled:opacity-50"
-                    >
-                      <CheckCircle className="h-3.5 w-3.5" />
-                      <span>Simulate & Approve</span>
-                    </button>
-
-                    <button
-                      onClick={() => handleReject(selectedIncident)}
-                      disabled={currentRemediationStatus === 'rejected'}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-border hover:bg-surface-hover text-text-primary text-xs font-medium transition-colors disabled:opacity-50"
-                    >
-                      <span>Reject Action</span>
-                    </button>
-
-                    <button
-                      onClick={() => handleRollback(selectedIncident)}
-                      disabled={currentRemediationStatus === 'rolled_back'}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-[#C2414B]/30 bg-[#FDF2F2] hover:bg-[#FBEAEA] text-[#C2414B] text-xs font-medium transition-colors disabled:opacity-50"
-                    >
-                      <RotateCcw className="h-3.5 w-3.5" />
-                      <span>Trigger Rollback</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Immutable Session Audit Log */}
-              <div className="rounded-lg border border-border bg-surface shadow-card overflow-hidden">
-                <div className="px-4 py-2.5 border-b border-border bg-surface-secondary flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <History className="h-3.5 w-3.5 text-text-muted" />
-                    <span className="text-xs font-semibold text-text-primary">
-                      Session Remediation Audit Trail
-                    </span>
-                  </div>
-                  <span className="text-[10px] font-mono text-text-muted">
-                    {auditLog.length} entries
-                  </span>
-                </div>
-
-                <div className="divide-y divide-border-subtle font-mono text-xs max-h-48 overflow-y-auto">
-                  {auditLog.map((log) => (
-                    <div key={log.id} className="p-3 text-[11px] hover:bg-surface-hover/50">
-                      <div className="flex items-center justify-between text-text-muted mb-1">
-                        <span>{log.timestamp.slice(11, 19)} UTC • {log.operator}</span>
-                        <StatusBadge status={log.status} />
-                      </div>
-                      <div className="font-semibold text-text-primary">{log.action}</div>
-                      <div className="text-text-secondary text-[10px] mt-0.5">{log.note}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+      {isStale && <div className="rounded border border-[#62635D]/30 bg-[#E8E6DE] p-3 text-xs">Incident list may be stale because the latest SaaS refresh failed.</div>}
+      <div className="rounded-lg border border-border bg-surface p-4 text-xs text-text-secondary"><div className="flex items-center gap-2 font-semibold text-text-primary"><Info className="h-4 w-4 text-accent" />Interpretation</div><p className="mt-1">Incidents group correlated telemetry evidence. Correlation does not confirm root cause. Recommended actions are persisted suggestions and are not executed by this dashboard.</p></div>
+      <section className="rounded-lg border border-border bg-surface shadow-card overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3"><h2 className="flex items-center gap-2 text-xs font-semibold"><AlertTriangle className="h-4 w-4 text-accent" />Persisted incidents</h2><div className="flex items-center gap-2 text-[10px] text-text-muted"><label>Severity<select value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)} className="ml-1 border border-border bg-surface px-2 py-1"><option value="all">All</option>{['critical', 'high', 'medium', 'low'].map((value) => <option key={value}>{value}</option>)}</select></label><label>Status<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="ml-1 border border-border bg-surface px-2 py-1"><option value="all">All</option>{['active', 'investigating', 'resolved'].map((value) => <option key={value}>{value}</option>)}</select></label><span>{isLoading ? 'Refreshing…' : `${filteredIncidents.length} shown`}</span></div></div>
+        {!filteredIncidents.length ? <p className="p-8 text-center text-xs text-text-muted">{!incidents.length ? (dataAvailable ? 'No incidents were returned by the SaaS API.' : 'Incident data is unavailable.') : 'No incidents match the selected filters.'}</p> : <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+          <div className="divide-y divide-border-subtle border-b border-border lg:border-b-0 lg:border-r">{filteredIncidents.map((incident) => <button key={incident.incident_id} onClick={() => setSelectedId(incident.incident_id)} className={`block w-full px-4 py-3 text-left ${visibleSelected?.incident_id === incident.incident_id ? 'bg-accent-light/40' : 'hover:bg-surface-hover'}`}><div className="flex items-center justify-between gap-2"><strong className="text-xs">{incident.service}</strong><span className="text-[10px] uppercase">{incident.severity} · {incident.status}</span></div><span className="mt-1 block font-mono text-[10px] text-text-muted">{incident.incident_id}</span><span className="mt-1 block text-[10px] text-text-secondary">First seen {timestamp(incident.started_at)}</span></button>)}</div>
+          {visibleSelected && <div className="space-y-4 p-4">
+            <div><h3 className="text-sm font-semibold">{visibleSelected.service}</h3><p className="mt-1 text-[11px] text-text-secondary">{visibleSelected.severity} · {visibleSelected.status} · confidence {(visibleSelected.confidence * 100).toFixed(0)}% (backend value)</p><div className="mt-2 grid grid-cols-1 gap-1 text-[11px] text-text-muted sm:grid-cols-2"><span>First seen: {timestamp(visibleSelected.started_at)}</span><span>Last seen: {timestamp(visibleSelected.last_seen_at)}</span></div></div>
+            <div className="rounded border border-border bg-surface-secondary p-3 text-xs"><strong>Persisted recommendation</strong><p className="mt-1">{visibleSelected.recommended_action || 'Not provided'}</p><p className="mt-2 text-text-muted">Rollback: {visibleSelected.rollback_plan || 'Not provided'}</p></div>
+            <div><h4 className="mb-2 text-xs font-semibold">Evidence and detector signals</h4>{loadingEvidence && <p className="text-xs text-text-muted">Loading persisted evidence…</p>}{evidenceError && <p className="text-xs text-[#B83A32]">{evidenceError}</p>}{!loadingEvidence && !evidenceError && evidence.length === 0 && <p className="text-xs text-text-muted">No persisted evidence rows were returned.</p>}
+              <div className="space-y-3">{evidence.map((row) => <IncidentEvidenceRow key={row.payload_id} row={row} />)}</div>
             </div>
-          )}
-        </div>
-      )}
+            <section className="border border-border bg-surface p-4" aria-labelledby="analysis-title">
+              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border-subtle pb-3">
+                <div><h4 id="analysis-title" className="flex items-center gap-2 text-xs font-semibold"><Sparkles className="h-4 w-4 text-signal" />Advisory reasoning rail</h4><p className="mt-1 text-[10px] text-text-secondary">AI findings are hypotheses; deterministic detection remains authoritative.</p></div>
+                <div className="flex gap-2"><button onClick={() => void refreshAnalysis()} disabled={analysisLoading} className="inline-flex items-center gap-2 border border-border px-3 py-1.5 text-[10px] font-semibold disabled:opacity-50"><RefreshCw className={`h-3 w-3 ${analysisLoading ? 'animate-spin' : ''}`} />Refresh</button>{analysis?.status === 'failed' && <button onClick={() => void retryAnalysis()} disabled={retryingAnalysis} className="inline-flex items-center gap-2 border border-ink bg-ink px-3 py-1.5 text-[10px] font-semibold text-paper disabled:opacity-50"><RefreshCw className={`h-3 w-3 ${retryingAnalysis ? 'animate-spin' : ''}`} />Retry</button>}</div>
+              </div>
+              {analysisLoading && <p className="py-4 text-xs text-text-muted">Loading persisted analysis and provenance…</p>}
+              {analysisError && <p role="alert" className="py-3 text-xs text-signal">{analysisError}</p>}
+              {!analysisLoading && analysis && <div className="space-y-3 pt-3 text-xs">
+                <div className="flex flex-wrap items-center gap-2"><span className="font-mono uppercase">{analysis.status.replace('_', ' ')}</span>{analysis.provider && <span className="text-text-muted">{analysis.provider} · {analysis.model}</span>}{analysis.result?.fusion && <span className="inline-flex items-center gap-1 border border-border px-2 py-1 text-[10px]"><ShieldCheck className="h-3 w-3" />Effective severity: {analysis.result.fusion.effective_severity} · deterministic authority</span>}</div>
+                {analysis.safe_error_code && <p className="text-text-secondary">Safe failure code: <code>{analysis.safe_error_code}</code>{analysis.safe_error_code === 'provider_not_configured' ? ' — advisory provider is not configured.' : ''}</p>}
+                {analysis.result?.analysis && <>
+                  <p className="leading-relaxed">{analysis.result.analysis.summary}</p>
+                  {analysis.result.fusion.disagreement_recorded && <p className="border-l-2 border-signal bg-[#F3E4DF] px-3 py-2 text-[#8F2D27]">AI assessment disagrees with deterministic evidence. Incident severity remains {analysis.result.fusion.effective_severity}.</p>}
+                  <div className="grid gap-3 lg:grid-cols-2"><div><strong className="text-[10px] uppercase tracking-wide text-text-secondary">Hypotheses</strong>{analysis.result.analysis.likely_causes.map((cause) => <article key={cause.hypothesis} className="mt-2 border border-border-subtle p-3"><p>{cause.hypothesis}</p><p className="mt-1 font-mono text-[10px] text-text-muted">Confidence {(cause.confidence * 100).toFixed(0)}% · evidence {cause.evidence_ids.join(', ')}</p></article>)}</div><div><strong className="text-[10px] uppercase tracking-wide text-text-secondary">Recommended investigation steps</strong><ul className="mt-2 list-decimal space-y-1 pl-5">{analysis.result.analysis.recommended_steps.map((step, index) => <li key={`${index}:${step}`}>{step}</li>)}</ul></div></div>
+                  <p className="text-[10px] text-text-muted">Analysis confidence {(analysis.result.analysis.confidence * 100).toFixed(0)}% · assessment {analysis.result.analysis.assessment} · cites {analysis.result.analysis.evidence_ids.length} persisted evidence IDs.</p>
+                  {analysis.result.analysis.limitations.length > 0 && <p className="text-[10px] text-text-secondary">Limitations: {analysis.result.analysis.limitations.join(' ')}</p>}
+                </>}
+                {analysis.status === 'not_requested' && <p className="text-text-muted">No advisory analysis has been recorded for this incident.</p>}
+                {analysis.status === 'pending' && <p className="text-text-muted">Analysis is pending. Refresh the incident view to check for a result.</p>}
+                {analysis.prompt_version && <p className="break-all font-mono text-[9px] text-text-muted">Provenance: {analysis.prompt_version} · SHA-256 {analysis.prompt_hash}</p>}
+              </div>}
+            </section>
+          </div>}
+        </div>}
+      </section>
     </div>
   );
 };
+
+export const IncidentEvidenceRow: React.FC<{ row: IncidentEvidence }> = ({ row }) => (
+  <article className="rounded border border-border p-3 text-[11px]">
+    <div className="flex flex-wrap justify-between gap-2"><strong>{row.service} · {row.environment}</strong><span className="font-mono text-text-muted">{timestamp(row.event_time)}</span></div>
+    <p className="mt-1 font-mono text-text-muted">Payload {row.payload_id} · collector {row.collector_id}</p>
+    {!row.signals.length ? <p className="mt-2 text-text-muted">No detector signals stored for this observation.</p> : <div className="mt-2 space-y-2">{row.signals.map((signal, index) => <div key={`${signal.metric}:${index}`} className="rounded bg-surface-secondary p-2"><div className="flex flex-wrap justify-between gap-2"><strong>{signal.metric}</strong><span className="capitalize">{signal.severity} · {signal.method}</span></div><p className="mt-1">Observed {signal.observed_value}; baseline {signal.baseline ?? 'unavailable'}; samples {signal.sample_count}; threshold {signal.threshold ?? 'unavailable'}</p><p className="mt-1 text-text-secondary">{signal.description}</p><p className="mt-1 font-mono text-text-muted">Signal time: {timestamp(signal.event_time)}</p></div>)}</div>}
+  </article>
+);

@@ -221,14 +221,16 @@ def test_tenant_isolation_on_read_endpoints(client: TestClient):
     tenant_a = f"tenant-a-{uuid.uuid4().hex[:6]}"
     tenant_b = f"tenant-b-{uuid.uuid4().hex[:6]}"
 
-    register_token(token_a, tenant_a, "collector-a")
-    register_token(token_b, tenant_b, "collector-b")
+    token_a2 = f"token-tenant-a2-{uuid.uuid4().hex[:6]}"
+    register_token(token_a, tenant_a, "collector-a-1")
+    register_token(token_a2, tenant_a, "collector-a-2")
+    register_token(token_b, tenant_b, "collector-b-1")
 
     # Ingest for Tenant A
     p_a1 = build_telemetry(tenant_id=tenant_a, service="service-alpha-1", collector_id="collector-a-1")
     p_a2 = build_telemetry(tenant_id=tenant_a, service="service-alpha-2", collector_id="collector-a-2")
     res_a1 = client.post("/api/v1/ingest", json=p_a1, headers={"Authorization": f"Bearer {token_a}"})
-    res_a2 = client.post("/api/v1/ingest", json=p_a2, headers={"Authorization": f"Bearer {token_a}"})
+    res_a2 = client.post("/api/v1/ingest", json=p_a2, headers={"Authorization": f"Bearer {token_a2}"})
     assert res_a1.status_code == 202
     assert res_a2.status_code == 202
 

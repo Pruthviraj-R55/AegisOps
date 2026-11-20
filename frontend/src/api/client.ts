@@ -1,100 +1,91 @@
-/**
- * Typed client for SaaS API (saas/api/main.py & saas/api/routes/dashboard.py)
- */
+/** Typed access to tenant-scoped SaaS endpoints. Tenant scope comes only from auth. */
 
-import {
+import { ApiRequestError, historyQuery, incidentEvidenceEndpoint, requestJson } from './http.mjs';
+import type {
   CollectorsResponse,
   DashboardOverview,
+  HistoryResponse,
+  IncidentEvidenceResponse,
+  IncidentAnalysisResponse,
   IncidentsResponse,
-  ProblemDetail,
   ServicesResponse,
 } from '../types/saas';
 
-export class SaasApiError extends Error {
-  status: number;
-  code: string;
-  detail: string;
-  requestId?: string;
+export { ApiRequestError as SaasApiError };
 
-  constructor(status: number, problem: Partial<ProblemDetail>) {
-    super(problem.detail || `SaaS API Error ${status}`);
-    this.name = 'SaasApiError';
-    this.status = status;
-    this.code = problem.code || 'unknown_error';
-    this.detail = problem.detail || 'An unexpected error occurred.';
-    this.requestId = problem.request_id;
-  }
+export interface DashboardSessionResponse {
+  authenticated: boolean;
+  user_id: string;
+  csrf_token: string;
 }
 
 export class SaasClient {
-  private baseUrl: string;
-  private token: string;
+  private readonly baseUrl: string;
+  private readonly token: string;
+  private readonly csrfToken: string;
 
-  constructor(baseUrl: string, token: string) {
+  constructor(baseUrl: string, token = '', csrfToken = '') {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.token = token.trim();
+    this.csrfToken = csrfToken;
   }
 
-  setToken(token: string) {
-    this.token = token.trim();
+  private request<T>(endpoint: string, signal?: AbortSignal, options: RequestInit = {}): Promise<T> {
+    return requestJson<T>(this.baseUrl, endpoint, this.token, { ...options, signal, csrfToken: this.csrfToken });
   }
 
-  setBaseUrl(url: string) {
-    this.baseUrl = url.replace(/\/+$/, '');
+  async getOverview(signal?: AbortSignal): Promise<DashboardOverview> {
+    return this.request('/api/v1/dashboard/overview', signal);
   }
 
-  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const url = `${this.baseUrl}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
-    const headers: Record<string, string> = {
-      'Accept': 'application/json',
-      ...(options.headers as Record<string, string> || {}),
-    };
+  async getServices(limit = 50, signal?: AbortSignal): Promise<ServicesResponse> {
+    return this.request(`/api/v1/services?${new URLSearchParams({ limit: String(limit) })}`, signal);
+  }
 
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`;
-    }
+  async getIncidents(limit = 50, signal?: AbortSignal): Promise<IncidentsResponse> {
+    return this.request(`/api/v1/incidents?${new URLSearchParams({ limit: String(limit) })}`, signal);
+  }
 
-    const response = await fetch(url, {
-      ...options,
-      headers,
+  async getCollectors(limit = 50, signal?: AbortSignal): Promise<CollectorsResponse> {
+    return this.request(`/api/v1/collectors?${new URLSearchParams({ limit: String(limit) })}`, signal);
+  }
+
+  async getTelemetry(options: { limit?: number; cursor?: string; startTime?: string; endTime?: string } = {}, signal?: AbortSignal): Promise<HistoryResponse> {
+    return this.request(`/api/v1/telemetry?${historyQuery(options)}`, signal);
+  }
+
+  async getSecurityEvents(options: { limit?: number; cursor?: string; startTime?: string; endTime?: string } = {}, signal?: AbortSignal): Promise<HistoryResponse> {
+    return this.request(`/api/v1/security-events?${historyQuery(options)}`, signal);
+  }
+
+  async getIncidentEvidence(incidentId: string, signal?: AbortSignal): Promise<IncidentEvidenceResponse> {
+    return this.request(incidentEvidenceEndpoint(incidentId), signal);
+  }
+
+  async getIncidentAnalysis(incidentId: string, signal?: AbortSignal): Promise<IncidentAnalysisResponse> {
+    return this.request(`/api/v1/incidents/${encodeURIComponent(incidentId)}/analysis`, signal);
+  }
+
+  async retryIncidentAnalysis(incidentId: string): Promise<IncidentAnalysisResponse> {
+    return this.request(`/api/v1/incidents/${encodeURIComponent(incidentId)}/analysis/retry`, undefined, { method: 'POST' });
+  }
+
+  login(email: string, password: string): Promise<DashboardSessionResponse> {
+    return requestJson<DashboardSessionResponse>(this.baseUrl, '/api/v1/auth/login', '', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
     });
-
-    if (!response.ok) {
-      let problem: Partial<ProblemDetail> = {};
-      try {
-        problem = await response.json();
-      } catch {
-        problem = { detail: await response.text() };
-      }
-      throw new SaasApiError(response.status, problem);
-    }
-
-    return response.json();
   }
 
-  async getHealth(): Promise<{ status: string; version: string }> {
-    return this.request<{ status: string; version: string }>('/api/v1/health');
+  getSession(): Promise<DashboardSessionResponse> {
+    return requestJson<DashboardSessionResponse>(this.baseUrl, '/api/v1/auth/session', '');
   }
 
-  async getOverview(): Promise<DashboardOverview> {
-    return this.request<DashboardOverview>('/api/v1/dashboard/overview');
-  }
-
-  async getServices(limit: number = 50, cursor?: string): Promise<ServicesResponse> {
-    const params = new URLSearchParams({ limit: String(limit) });
-    if (cursor) params.append('cursor', cursor);
-    return this.request<ServicesResponse>(`/api/v1/services?${params.toString()}`);
-  }
-
-  async getIncidents(limit: number = 50, cursor?: string): Promise<IncidentsResponse> {
-    const params = new URLSearchParams({ limit: String(limit) });
-    if (cursor) params.append('cursor', cursor);
-    return this.request<IncidentsResponse>(`/api/v1/incidents?${params.toString()}`);
-  }
-
-  async getCollectors(limit: number = 50, cursor?: string): Promise<CollectorsResponse> {
-    const params = new URLSearchParams({ limit: String(limit) });
-    if (cursor) params.append('cursor', cursor);
-    return this.request<CollectorsResponse>(`/api/v1/collectors?${params.toString()}`);
+  logout(csrfToken: string): Promise<{ logged_out: boolean }> {
+    return requestJson<{ logged_out: boolean }>(this.baseUrl, '/api/v1/auth/logout', '', {
+      method: 'POST',
+      csrfToken,
+    });
   }
 }

@@ -8,91 +8,101 @@ import {
 } from 'lucide-react';
 
 interface SettingsViewProps {
-  currentTenant: string;
   currentToken: string;
-  onSaveToken: (tenant: string, token: string) => void;
+  onSaveToken: (token: string) => void;
   saasUrl: string;
   collectorUrl: string;
+  authEnabled: boolean;
+  isAuthenticated?: boolean;
+  environmentLabel?: string;
+}
+
+function safeEndpointLabel(value: string): string {
+  try {
+    const parsed = new URL(value);
+    parsed.username = '';
+    parsed.password = '';
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.toString().replace(/\/$/, '');
+  } catch {
+    return 'Configured endpoint';
+  }
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
-  currentTenant,
   currentToken,
   onSaveToken,
   saasUrl,
   collectorUrl,
+  authEnabled,
+  isAuthenticated = false,
+  environmentLabel = 'Unavailable',
 }) => {
-  const [tenantInput, setTenantInput] = React.useState(currentTenant);
   const [tokenInput, setTokenInput] = React.useState(currentToken);
   const [savedNotice, setSavedNotice] = React.useState(false);
 
   React.useEffect(() => {
-    setTenantInput(currentTenant);
     setTokenInput(currentToken);
-  }, [currentTenant, currentToken]);
+  }, [currentToken]);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    onSaveToken(tenantInput.trim(), tokenInput.trim());
+    onSaveToken(tokenInput.trim());
     setSavedNotice(true);
     setTimeout(() => setSavedNotice(false), 3000);
   };
 
-  const resetToDefault = () => {
-    setTenantInput('development-tenant');
-    setTokenInput('dev-secret-token-12345');
-    onSaveToken('development-tenant', 'dev-secret-token-12345');
+  const clearToken = () => {
+    setTokenInput('');
+    onSaveToken('');
     setSavedNotice(true);
     setTimeout(() => setSavedNotice(false), 3000);
   };
 
   return (
     <div className="space-y-6 max-w-4xl">
-      {/* Tenant Authentication & Authorization Card */}
+      {/* Development-only authentication boundary */}
       <div className="rounded-lg border border-border bg-surface p-5 shadow-card">
         <div className="flex items-center justify-between pb-3 mb-4 border-b border-border-subtle">
           <div className="flex items-center gap-2">
             <KeyRound className="h-4 w-4 text-accent" />
             <h2 className="text-sm font-semibold text-text-primary">
-              Active Tenant Scope & Bearer Token
+              Dashboard authentication
             </h2>
           </div>
           {savedNotice && (
-            <span className="flex items-center gap-1 text-xs text-[#23865B] font-mono font-medium">
+            <span className="flex items-center gap-1 text-xs text-[#55564F] font-mono font-medium">
               <CheckCircle className="h-3.5 w-3.5" />
               Settings Applied
             </span>
           )}
+          <span className={`border px-2 py-1 text-[10px] font-mono ${isAuthenticated ? 'border-[#77786F] bg-[#E8E6DE] text-ink' : 'border-border text-text-muted'}`}>{isAuthenticated ? 'Authenticated' : 'Not connected'}</span>
         </div>
 
-        <form onSubmit={handleSave} className="space-y-4">
+        {authEnabled ? <form onSubmit={handleSave} className="space-y-4">
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1">
-              Active Tenant ID
+              Local development credential
             </label>
-            <input
-              type="text"
-              value={tenantInput}
-              onChange={(e) => setTenantInput(e.target.value)}
-              className="w-full max-w-md px-3 py-1.5 rounded border border-border bg-surface text-xs font-mono text-text-primary focus:border-accent focus:outline-none"
-            />
             <p className="text-[11px] text-text-muted mt-1">
-              Enforced on every read endpoint. The server validates that this tenant matches the authenticated collector credential.
+              Enter the explicitly configured <code>SAAS_DASHBOARD_DEV_TOKEN</code> for a local development API. The backend binds authorization scope to its server configuration; this page has no tenant selector.
             </p>
           </div>
 
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1">
-              Bearer Token
+              Development token
             </label>
             <input
-              type="text"
+              type="password"
+              autoComplete="off"
               value={tokenInput}
               onChange={(e) => setTokenInput(e.target.value)}
               className="w-full max-w-md px-3 py-1.5 rounded border border-border bg-surface text-xs font-mono text-text-primary focus:border-accent focus:outline-none"
             />
             <p className="text-[11px] text-text-muted mt-1">
-              Default value configured in <code className="font-mono">.env</code> is <code className="font-mono text-accent">dev-secret-token-12345</code>.
+              Token stays in memory only and is sent to the local API as a bearer credential. Do not paste a collector delivery token here.
             </p>
           </div>
 
@@ -105,14 +115,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </button>
             <button
               type="button"
-              onClick={resetToDefault}
+              onClick={clearToken}
               className="flex items-center gap-1 px-3 py-1.5 rounded border border-border hover:bg-surface-hover text-xs font-medium text-text-secondary transition-colors"
             >
               <RotateCcw className="h-3.5 w-3.5" />
-              <span>Reset to Defaults</span>
+              <span>Clear Token</span>
             </button>
           </div>
-        </form>
+        </form> : <p className="text-xs text-text-secondary">This dashboard uses a server-validated session cookie. Session credentials are not stored in browser storage or exposed as bearer tokens.</p>}
       </div>
 
       {/* Endpoint Configuration & Routing */}
@@ -125,15 +135,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
 
         <div className="space-y-3 text-xs font-mono">
+          <div className="p-3 border border-border-subtle bg-surface-secondary flex items-center justify-between"><span className="text-text-secondary">Dashboard environment</span><span className="font-semibold text-ink">{environmentLabel}</span></div>
           <div className="p-3 rounded bg-surface-secondary border border-border-subtle flex items-center justify-between">
             <div>
               <span className="text-text-muted block text-[10px] font-sans">
                 Tier 2 SaaS API Base URL:
               </span>
-              <span className="text-text-primary font-bold">{saasUrl}</span>
+              <span className="text-text-primary font-bold">{safeEndpointLabel(saasUrl)}</span>
             </div>
             <span className="text-[10px] text-accent font-sans bg-accent-light px-2 py-0.5 rounded">
-              Active Connection
+              URL configured
             </span>
           </div>
 
@@ -142,7 +153,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <span className="text-text-muted block text-[10px] font-sans">
                 Tier 1 Local Collector URL:
               </span>
-              <span className="text-text-primary font-bold">{collectorUrl}</span>
+              <span className="text-text-primary font-bold">{safeEndpointLabel(collectorUrl)}</span>
             </div>
             <span className="text-[10px] text-text-muted font-sans bg-surface px-2 py-0.5 rounded border border-border">
               Configured

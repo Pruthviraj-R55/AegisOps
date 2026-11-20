@@ -1,492 +1,157 @@
 import React from 'react';
-import {
-  AlertTriangle,
-  ArrowRight,
-  Cpu,
-  HardDrive,
-  Info,
-  Layers,
-  Network,
-  ShieldCheck,
-} from 'lucide-react';
-import {
-  CartesianGrid,
-  Legend,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
-import { DashboardOverview, IncidentItem, ServiceItem } from '../types/saas';
-import { TelemetryDataPoint } from '../types/telemetry';
+import { AlertTriangle, Network, Server, ShieldCheck } from 'lucide-react';
+import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { StatusBadge } from '../components/StatusBadge';
+import type { CollectorItem, DashboardOverview, HistoryResponse, IncidentItem, ServiceItem } from '../types/saas';
+import type { TelemetryDataPoint } from '../types/telemetry';
 
 interface OverviewViewProps {
   overview: DashboardOverview | null;
   services: ServiceItem[];
+  servicesAvailable: boolean;
   incidents: IncidentItem[];
+  incidentsAvailable: boolean;
+  collectors: CollectorItem[];
+  collectorsAvailable: boolean;
+  telemetry: HistoryResponse | null;
+  securityEvents: HistoryResponse | null;
   telemetryHistory: Record<string, TelemetryDataPoint[]>;
   selectedService: string | null;
   onSelectService: (service: string) => void;
   onNavigateToIncidents: () => void;
-  isLoading: boolean;
+  onLoadTelemetry: (cursor?: string, startTime?: string, endTime?: string) => Promise<void>;
+  telemetryLoading: boolean;
+  timeFilter: { startTime: string; endTime: string };
+  isStale: boolean;
+  dataAvailable: boolean;
+}
+
+function localInput(value: string): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
+function toUtcQuery(value: string): string | undefined {
+  if (!value) return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
 export const OverviewView: React.FC<OverviewViewProps> = ({
-  overview,
-  services,
-  incidents,
-  telemetryHistory,
-  selectedService,
-  onSelectService,
-  onNavigateToIncidents,
+  overview, services, servicesAvailable, incidents, incidentsAvailable, collectors, collectorsAvailable, telemetry, securityEvents, telemetryHistory, selectedService,
+  onSelectService, onNavigateToIncidents, onLoadTelemetry, telemetryLoading,
+  timeFilter, isStale, dataAvailable,
 }) => {
-  const overallHealth = overview?.overall_health || 'good';
-  const serviceCounts = overview?.service_counts || { excellent: 0, good: 0, fair: 0, poor: 0 };
-  const totalServices =
-    serviceCounts.excellent + serviceCounts.good + serviceCounts.fair + serviceCounts.poor;
-  const activeIncidents = overview?.active_incident_count ?? 0;
-  const staleServices = overview?.stale_service_count ?? 0;
+  const [startInput, setStartInput] = React.useState(localInput(timeFilter.startTime));
+  const [endInput, setEndInput] = React.useState(localInput(timeFilter.endTime));
+  React.useEffect(() => {
+    setStartInput(localInput(timeFilter.startTime));
+    setEndInput(localInput(timeFilter.endTime));
+  }, [timeFilter.startTime, timeFilter.endTime]);
 
-  // Fleet averages
-  const validServices = services.filter((s) => s.metrics);
-  const avgCpu =
-    validServices.length > 0
-      ? validServices.reduce((acc, s) => acc + (s.metrics.cpu_percent ?? 0), 0) / validServices.length
-      : 0;
-  const avgMem =
-    validServices.length > 0
-      ? validServices.reduce((acc, s) => acc + (s.metrics.memory_percent ?? 0), 0) / validServices.length
-      : 0;
-  const avgLat =
-    validServices.length > 0
-      ? validServices.reduce((acc, s) => acc + (s.metrics.latency_ms ?? 0), 0) / validServices.length
-      : 0;
-  const maxLoss =
-    validServices.length > 0
-      ? Math.max(...validServices.map((s) => s.metrics.packet_loss_percent ?? 0))
-      : 0;
-
-  // Distinct service list
-  const uniqueServices = Array.from(new Set(services.map((s) => s.service)));
-  const currentService = selectedService || uniqueServices[0] || '';
-  const currentHistory = currentService ? telemetryHistory[currentService] || [] : [];
-  const hasHistory = currentHistory.length >= 2;
+  const currentService = selectedService || services[0]?.service || '';
+  const history = telemetryHistory[currentService] || [];
+  const shownIncidents = incidents.filter((incident) => incident.status !== 'resolved').slice(0, 5);
+  const totalServices = overview ? Object.values(overview.service_counts).reduce((sum, count) => sum + count, 0) : 0;
+  const activeCollectors = collectorsAvailable ? collectors.filter((collector) => collector.status === 'online').length : null;
+  const severityCounts = incidents.filter((incident) => incident.status !== 'resolved').reduce<Record<string, number>>((counts, incident) => {
+    counts[incident.severity] = (counts[incident.severity] || 0) + 1;
+    return counts;
+  }, { critical: 0, high: 0, medium: 0, low: 0 });
+  const time = (value?: string) => value ? `${new Date(value).toLocaleString(undefined, { timeZone: 'UTC', hour12: false })} UTC` : 'Unavailable';
 
   return (
     <div className="space-y-6">
-      {/* 4 Numerical KPI Cards (Linear / Vercel style, zero radial gauges) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* KPI 1: Fleet Health */}
+      {isStale && <div className="rounded border border-[#62635D]/30 bg-[#E8E6DE] px-3 py-2 text-xs text-ink">Displayed SaaS data may be stale. Check the refresh status and event timestamps.</div>}
+      {!dataAvailable && <div className="rounded border border-border bg-surface px-3 py-2 text-xs text-text-muted">Live overview data is unavailable until an authorized SaaS response is received.</div>}
+
+      <section className="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-5 gap-3">
         <div className="rounded-lg border border-border bg-surface p-4 shadow-card">
-          <div className="flex items-center justify-between text-xs font-medium text-text-muted mb-2">
-            <span>Overall Fleet Health</span>
-            <Layers className="h-4 w-4 text-text-muted" />
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-bold font-mono tracking-tight text-text-primary capitalize">
-              {overallHealth}
-            </span>
-            <StatusBadge status={overallHealth} />
-          </div>
-          <div className="mt-3 flex items-center justify-between text-[11px] text-text-secondary pt-2 border-t border-border-subtle">
-            <span>{totalServices} monitored services</span>
-            {staleServices > 0 && (
-              <span className="text-[#C2414B] font-mono font-medium">
-                {staleServices} stale
-              </span>
-            )}
-          </div>
+          <div className="mb-2 flex items-center justify-between text-xs text-text-muted"><span>Fleet health</span><ShieldCheck className="h-4 w-4" /></div>
+          <div className="text-2xl font-bold capitalize">{overview ? overview.overall_health : 'Unavailable'}</div>
+          <p className="mt-2 border-t border-border-subtle pt-2 text-[11px] text-text-secondary">{overview ? `${totalServices} services · ${overview.stale_service_count} stale` : 'Service totals unavailable'}</p>
         </div>
-
-        {/* KPI 2: Fleet Avg CPU */}
         <div className="rounded-lg border border-border bg-surface p-4 shadow-card">
-          <div className="flex items-center justify-between text-xs font-medium text-text-muted mb-2">
-            <span>Fleet Avg CPU</span>
-            <Cpu className="h-4 w-4 text-text-muted" />
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-bold font-mono tracking-tight text-text-primary tabular-nums">
-              {avgCpu.toFixed(1)}%
-            </span>
-            <span className="text-xs font-mono text-text-muted">utilization</span>
-          </div>
-          <div className="mt-3 flex items-center justify-between text-[11px] text-text-secondary pt-2 border-t border-border-subtle">
-            <span>Critical threshold: 85%</span>
-            <span
-              className={`font-mono font-medium ${
-                avgCpu > 80 ? 'text-[#C2414B]' : 'text-[#23865B]'
-              }`}
-            >
-              {avgCpu > 80 ? 'Elevated' : 'Normal'}
-            </span>
-          </div>
+          <div className="mb-2 flex items-center justify-between text-xs text-text-muted"><span>Active collectors</span><Server className="h-4 w-4" /></div>
+          <div className="text-2xl font-bold tabular-nums">{activeCollectors ?? 'Unavailable'}</div>
+          <p className="mt-2 border-t border-border-subtle pt-2 text-[11px] text-text-secondary">Online status from the tenant-scoped SaaS API</p>
         </div>
-
-        {/* KPI 3: Fleet Avg Memory */}
         <div className="rounded-lg border border-border bg-surface p-4 shadow-card">
-          <div className="flex items-center justify-between text-xs font-medium text-text-muted mb-2">
-            <span>Fleet Avg Memory</span>
-            <HardDrive className="h-4 w-4 text-text-muted" />
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-bold font-mono tracking-tight text-text-primary tabular-nums">
-              {avgMem.toFixed(1)}%
-            </span>
-            <span className="text-xs font-mono text-text-muted">allocated</span>
-          </div>
-          <div className="mt-3 flex items-center justify-between text-[11px] text-text-secondary pt-2 border-t border-border-subtle">
-            <span>Warning threshold: 80%</span>
-            <span
-              className={`font-mono font-medium ${
-                avgMem > 80 ? 'text-[#B7791F]' : 'text-[#23865B]'
-              }`}
-            >
-              {avgMem > 80 ? 'High' : 'Normal'}
-            </span>
+          <div className="mb-2 flex items-center justify-between text-xs text-text-muted"><span>Critical incidents</span><AlertTriangle className="h-4 w-4 text-signal" /></div>
+          <div className="text-2xl font-bold tabular-nums">{incidentsAvailable ? severityCounts.critical : 'Unavailable'}</div>
+          <p className="mt-2 border-t border-border-subtle pt-2 text-[11px] text-text-secondary">Active and investigating, returned incident records</p>
+        </div>
+        <button onClick={onNavigateToIncidents} className="rounded-lg border border-border bg-surface p-4 text-left shadow-card hover:bg-surface-hover">
+          <div className="mb-2 flex items-center justify-between text-xs text-text-muted"><span>Active incidents</span><AlertTriangle className="h-4 w-4" /></div>
+          <div className="text-2xl font-bold tabular-nums">{overview?.active_incident_count ?? 'Unavailable'}</div>
+          <p className="mt-2 border-t border-border-subtle pt-2 text-[11px] text-text-secondary">Persisted incidents from SaaS</p>
+        </button>
+      </section>
+
+      <section className="rounded-lg border border-border bg-surface p-4 shadow-card">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle pb-3">
+          <div className="flex items-center gap-2"><Network className="h-4 w-4 text-accent" /><h2 className="text-xs font-semibold">Persisted telemetry history</h2></div>
+          <div className="flex flex-wrap items-end gap-2 text-[11px]">
+            <label className="grid gap-1 text-text-muted">Start (browser local)<input type="datetime-local" value={startInput} onChange={(event) => setStartInput(event.target.value)} className="rounded border border-border bg-surface px-2 py-1 text-text-primary" /></label>
+            <label className="grid gap-1 text-text-muted">End (browser local)<input type="datetime-local" value={endInput} onChange={(event) => setEndInput(event.target.value)} className="rounded border border-border bg-surface px-2 py-1 text-text-primary" /></label>
+            <button disabled={telemetryLoading} onClick={() => void onLoadTelemetry(undefined, toUtcQuery(startInput) || '', toUtcQuery(endInput) || '')} className="rounded bg-accent px-3 py-1.5 text-white disabled:opacity-50">Apply range</button>
+            <button disabled={telemetryLoading} onClick={() => { setStartInput(''); setEndInput(''); void onLoadTelemetry(undefined, '', ''); }} className="rounded border border-border px-3 py-1.5 text-text-secondary disabled:opacity-50">Clear</button>
           </div>
         </div>
-
-        {/* KPI 4: Network Latency & Loss */}
-        <div className="rounded-lg border border-border bg-surface p-4 shadow-card">
-          <div className="flex items-center justify-between text-xs font-medium text-text-muted mb-2">
-            <span>Network Latency / Loss</span>
-            <Network className="h-4 w-4 text-text-muted" />
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-bold font-mono tracking-tight text-text-primary tabular-nums">
-              {avgLat.toFixed(1)}
-            </span>
-            <span className="text-xs font-mono text-text-muted">ms avg</span>
-            <span className="text-xs font-mono text-text-muted ml-1">
-              ({maxLoss.toFixed(1)}% loss)
-            </span>
-          </div>
-          <div className="mt-3 flex items-center justify-between text-[11px] text-text-secondary pt-2 border-t border-border-subtle">
-            <span>Active Incidents:</span>
-            <span
-              className={`font-mono font-bold ${
-                activeIncidents > 0 ? 'text-[#C2414B]' : 'text-[#23865B]'
-              }`}
-            >
-              {activeIncidents} active
-            </span>
-          </div>
+        <p className="py-2 text-[11px] text-text-muted">The browser-local time selected above is converted to UTC before querying. Showing records ordered by event time; missing metric values remain unavailable.</p>
+        <div className="flex flex-wrap items-center gap-2 py-2 text-[11px] text-text-secondary">
+          <label>Chart service <select value={currentService} onChange={(event) => onSelectService(event.target.value)} className="ml-2 rounded border border-border bg-surface px-2 py-1">
+            {services.map((service) => <option key={`${service.service}:${service.environment}:${service.region || ''}`} value={service.service}>{service.service} · {service.environment}</option>)}
+          </select></label>
+          <span>{telemetry?.items.length ?? 0} records on this page</span>
+          {telemetry?.items.length ? <span>Latest event: {time(telemetry.items[0].event_time)}</span> : null}
         </div>
-      </div>
-
-      {/* Fleet Distribution Strip */}
-      <div className="rounded-lg border border-border bg-surface p-4 shadow-card">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="h-4 w-4 text-accent" />
-            <span className="text-xs font-semibold text-text-primary">
-              Fleet Service Distribution
-            </span>
-            <span className="text-xs text-text-muted font-mono">
-              ({totalServices} total)
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-4 text-xs font-mono">
-            <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#23865B]" />
-              <span className="text-text-secondary">Excellent:</span>
-              <span className="font-bold text-text-primary">{serviceCounts.excellent}</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#3267C8]" />
-              <span className="text-text-secondary">Good:</span>
-              <span className="font-bold text-text-primary">{serviceCounts.good}</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#B7791F]" />
-              <span className="text-text-secondary">Fair:</span>
-              <span className="font-bold text-text-primary">{serviceCounts.fair}</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#C2414B]" />
-              <span className="text-text-secondary">Poor:</span>
-              <span className="font-bold text-text-primary">{serviceCounts.poor}</span>
-            </div>
-          </div>
+        <div className="h-60 w-full">
+          {!history.length ? <div className="flex h-full items-center justify-center text-xs text-text-muted">No telemetry history returned for this service and time range.</div> : (
+            <ResponsiveContainer width="100%" height="100%"><LineChart data={history} margin={{ top: 8, right: 16, left: 0, bottom: 24 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#D8D5CB" vertical={false} />
+              <XAxis dataKey="displayTime" tick={{ fontSize: 9 }} angle={-18} textAnchor="end" />
+              <YAxis tick={{ fontSize: 10 }} />
+              <Tooltip labelFormatter={(label) => label} />
+              <Legend />
+              <Line type="monotone" dataKey="cpu" name="CPU %" stroke="#B83A32" dot={false} connectNulls={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="memory" name="Memory %" stroke="#20211E" dot={false} connectNulls={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="latency" name="Latency ms" stroke="#77786F" dot={false} connectNulls={false} isAnimationActive={false} />
+            </LineChart></ResponsiveContainer>
+          )}
         </div>
-      </div>
-
-      {/* 2-Column Performance Charts Grid */}
-      <div className="space-y-3">
-        {/* Chart Header with Service Selector */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-text-primary">
-              Real-Time Performance Telemetry
-            </h2>
-            <span className="text-[11px] text-text-muted">
-              (Live SaaS ingestion stream)
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-text-secondary">Selected Service:</label>
-            <select
-              value={currentService}
-              onChange={(e) => onSelectService(e.target.value)}
-              className="text-xs font-mono rounded border border-border bg-surface px-2.5 py-1 text-text-primary focus:border-accent focus:outline-none"
-            >
-              {uniqueServices.map((svc) => (
-                <option key={svc} value={svc}>
-                  {svc}
-                </option>
-              ))}
-            </select>
-          </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-[11px]"><thead><tr className="border-y border-border text-text-muted"><th className="py-2 pr-4">Event time (UTC)</th><th className="pr-4">Service / environment</th><th className="pr-4">Health</th><th className="pr-4">CPU %</th><th className="pr-4">Latency ms</th><th>Ingested (UTC)</th></tr></thead>
+            <tbody className="divide-y divide-border-subtle">{telemetry?.items.map((record) => <tr key={record.payload_id}><td className="py-2 pr-4 font-mono">{time(record.event_time)}</td><td className="pr-4">{record.service} / {record.environment}</td><td className="pr-4"><StatusBadge status={record.health} /></td><td className="pr-4">{record.metrics.cpu_percent ?? 'Unavailable'}</td><td className="pr-4">{record.metrics.latency_ms ?? 'Unavailable'}</td><td>{time(record.ingested_at)}</td></tr>)}</tbody>
+          </table>
+        {!telemetry?.items.length && <p className="py-6 text-center text-xs text-text-muted">{telemetry ? 'No persisted telemetry records match this query.' : 'Telemetry history is unavailable.'}</p>}
         </div>
+        <div className="mt-3 flex items-center justify-between text-xs"><span className="text-text-muted">{telemetry?.has_more ? 'More records are available.' : 'End of returned history.'}</span><button disabled={!telemetry?.next_cursor || telemetryLoading} onClick={() => void onLoadTelemetry(telemetry?.next_cursor || undefined)} className="rounded border border-border px-3 py-1.5 text-text-secondary disabled:opacity-40">{telemetryLoading ? 'Loading…' : 'Next page'}</button></div>
+      </section>
 
-        {/* Charts */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* Chart 1: CPU & Memory */}
-          <div className="rounded-lg border border-border bg-surface p-4 shadow-card">
-            <div className="flex items-center justify-between mb-3 pb-2 border-b border-border-subtle">
-              <span className="text-xs font-semibold text-text-primary">
-                CPU & Memory Utilization
-              </span>
-              <span className="text-[11px] font-mono text-text-muted">
-                {currentService || 'No service selected'}
-              </span>
-            </div>
+      <section className="rounded-lg border border-border bg-surface shadow-card">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3"><h2 className="flex items-center gap-2 text-xs font-semibold"><Server className="h-4 w-4 text-accent" />Current service health</h2><span className="text-[11px] text-text-muted">{services.length} returned</span></div>
+        {!services.length ? <p className="p-6 text-center text-xs text-text-muted">{servicesAvailable ? 'No service records were returned by the SaaS API.' : 'Service health data is unavailable.'}</p> : <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="border-b border-border text-[11px] text-text-muted"><tr><th className="px-4 py-2">Service</th><th>Environment</th><th>Region</th><th>Health</th><th>CPU %</th><th>Last event (UTC)</th></tr></thead><tbody className="divide-y divide-border-subtle">{services.map((service) => <tr key={`${service.service}:${service.environment}:${service.region || ''}`}><td className="px-4 py-2 font-medium">{service.service}</td><td>{service.environment}</td><td>{service.region || 'Unavailable'}</td><td><StatusBadge status={service.health} isStale={service.stale} /></td><td>{service.metrics.cpu_percent ?? 'Unavailable'}</td><td>{time(service.last_event_time)}</td></tr>)}</tbody></table></div>}
+      </section>
 
-            <div className="h-56 w-full">
-              {!hasHistory ? (
-                <div className="flex flex-col items-center justify-center h-full text-center p-4">
-                  <Info className="h-6 w-6 text-text-muted mb-2 opacity-60" />
-                  <p className="text-xs font-medium text-text-secondary">
-                    Waiting for telemetry history...
-                  </p>
-                  <p className="text-[11px] text-text-muted font-mono mt-1">
-                    Accumulating genuine real-time samples from SaaS API.
-                  </p>
-                </div>
-              ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={currentHistory} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#EDF2F7" vertical={false} />
-                    <XAxis
-                      dataKey="displayTime"
-                      stroke="#8C9BA5"
-                      fontSize={10}
-                      tickLine={false}
-                      fontFamily="JetBrains Mono, monospace"
-                    />
-                    <YAxis
-                      domain={[0, 100]}
-                      stroke="#8C9BA5"
-                      fontSize={10}
-                      tickLine={false}
-                      fontFamily="JetBrains Mono, monospace"
-                      unit="%"
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: '#FFFFFF',
-                        borderColor: '#E3E8ED',
-                        borderRadius: '6px',
-                        fontSize: '11px',
-                        fontFamily: 'JetBrains Mono, monospace',
-                        boxShadow: '0 4px 6px -2px rgba(16, 24, 40, 0.05)',
-                      }}
-                    />
-                    <Legend wrapperStyle={{ fontSize: '11px', fontFamily: 'JetBrains Mono, monospace' }} />
-                    <Line
-                      type="monotone"
-                      dataKey="cpu"
-                      name="CPU %"
-                      stroke="#147D70"
-                      strokeWidth={2}
-                      dot={false}
-                      isAnimationActive={false}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="memory"
-                      name="Memory %"
-                      stroke="#3267C8"
-                      strokeWidth={2}
-                      dot={false}
-                      isAnimationActive={false}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </div>
+      <section className="rounded-lg border border-border bg-surface shadow-card overflow-hidden">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3"><h2 className="text-xs font-semibold">Recent persisted security events</h2><span className="font-mono text-[10px] text-text-muted">{securityEvents ? `${securityEvents.items.length} loaded` : 'Unavailable'}</span></div>
+        {!securityEvents?.items.length ? <p className="p-5 text-xs text-text-muted">{securityEvents ? 'No security events were returned for this tenant.' : 'Security event data is unavailable.'}</p> : <div className="divide-y divide-border-subtle">{securityEvents.items.slice(0, 5).map((event) => <div key={event.payload_id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-xs"><div><strong>{event.service}</strong><span className="ml-2 text-text-secondary">{event.environment}</span><p className="mt-1 font-mono text-[10px] text-text-muted">{event.payload_id}</p></div><div className="flex flex-wrap gap-3 font-mono text-[10px]"><span>Failed logins {event.security.failed_login_count ?? 'Not reported'}</span><span>Suspicious activity {event.security.suspicious_activity_count ?? 'Not reported'}</span><span>{time(event.event_time)}</span></div></div>)}</div>}
+      </section>
 
-          {/* Chart 2: Latency & Packet Loss */}
-          <div className="rounded-lg border border-border bg-surface p-4 shadow-card">
-            <div className="flex items-center justify-between mb-3 pb-2 border-b border-border-subtle">
-              <span className="text-xs font-semibold text-text-primary">
-                Network Latency & Packet Loss
-              </span>
-              <span className="text-[11px] font-mono text-text-muted">
-                {currentService || 'No service selected'}
-              </span>
-            </div>
+      <section className="rounded-lg border border-border bg-surface shadow-card">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3"><h2 className="flex items-center gap-2 text-xs font-semibold"><Server className="h-4 w-4 text-accent" />SaaS collector connectivity</h2><span className="text-[11px] text-text-muted">{collectors.length} returned</span></div>
+        {!collectors.length ? <p className="p-6 text-center text-xs text-text-muted">{collectorsAvailable ? 'No collector records are available for this tenant.' : 'Collector status is unavailable.'}</p> : <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="border-b border-border text-[11px] text-text-muted"><tr><th className="px-4 py-2">Collector</th><th>Status</th><th>Last seen (UTC)</th><th>Last payload</th></tr></thead><tbody className="divide-y divide-border-subtle">{collectors.map((collector) => <tr key={collector.collector_id}><td className="px-4 py-2 font-mono">{collector.collector_id}</td><td className="capitalize">{collector.status}</td><td>{time(collector.last_seen_at)}</td><td className="font-mono">{collector.last_payload_id}</td></tr>)}</tbody></table><p className="px-4 py-2 text-[10px] text-text-muted">Pending queue count is not shown because the current SaaS API does not expose local queue state.</p></div>}
+      </section>
 
-            <div className="h-56 w-full">
-              {!hasHistory ? (
-                <div className="flex flex-col items-center justify-center h-full text-center p-4">
-                  <Info className="h-6 w-6 text-text-muted mb-2 opacity-60" />
-                  <p className="text-xs font-medium text-text-secondary">
-                    Waiting for telemetry history...
-                  </p>
-                  <p className="text-[11px] text-text-muted font-mono mt-1">
-                    Accumulating genuine real-time samples from SaaS API.
-                  </p>
-                </div>
-              ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={currentHistory} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#EDF2F7" vertical={false} />
-                    <XAxis
-                      dataKey="displayTime"
-                      stroke="#8C9BA5"
-                      fontSize={10}
-                      tickLine={false}
-                      fontFamily="JetBrains Mono, monospace"
-                    />
-                    <YAxis
-                      yAxisId="left"
-                      stroke="#8C9BA5"
-                      fontSize={10}
-                      tickLine={false}
-                      fontFamily="JetBrains Mono, monospace"
-                      unit="ms"
-                    />
-                    <YAxis
-                      yAxisId="right"
-                      orientation="right"
-                      domain={[0, 10]}
-                      stroke="#C2414B"
-                      fontSize={10}
-                      tickLine={false}
-                      fontFamily="JetBrains Mono, monospace"
-                      unit="%"
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: '#FFFFFF',
-                        borderColor: '#E3E8ED',
-                        borderRadius: '6px',
-                        fontSize: '11px',
-                        fontFamily: 'JetBrains Mono, monospace',
-                        boxShadow: '0 4px 6px -2px rgba(16, 24, 40, 0.05)',
-                      }}
-                    />
-                    <Legend wrapperStyle={{ fontSize: '11px', fontFamily: 'JetBrains Mono, monospace' }} />
-                    <Line
-                      yAxisId="left"
-                      type="monotone"
-                      dataKey="latency"
-                      name="Latency (ms)"
-                      stroke="#147D70"
-                      strokeWidth={2}
-                      dot={false}
-                      isAnimationActive={false}
-                    />
-                    <Line
-                      yAxisId="right"
-                      type="monotone"
-                      dataKey="packetLoss"
-                      name="Packet Loss %"
-                      stroke="#C2414B"
-                      strokeWidth={1.5}
-                      dot={false}
-                      isAnimationActive={false}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Recent Incidents Table */}
-      <div className="rounded-lg border border-border bg-surface shadow-card overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-surface-secondary">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-[#B7791F]" />
-            <span className="text-xs font-semibold text-text-primary">
-              Recent Correlated Incidents
-            </span>
-            <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-surface border border-border text-text-muted">
-              {incidents.length} total
-            </span>
-          </div>
-
-          <button
-            onClick={onNavigateToIncidents}
-            className="flex items-center gap-1 text-xs font-medium text-accent hover:underline"
-          >
-            <span>View All Incidents</span>
-            <ArrowRight className="h-3 w-3" />
-          </button>
-        </div>
-
-        {incidents.length === 0 ? (
-          <div className="p-8 text-center text-text-muted text-xs">
-            No active incidents detected. All services operating within normal baselines.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="border-b border-border bg-surface-secondary/50 text-[11px] font-medium text-text-muted font-mono">
-                <tr>
-                  <th className="py-2.5 px-4">Incident ID</th>
-                  <th className="py-2.5 px-4">Service</th>
-                  <th className="py-2.5 px-4">Severity</th>
-                  <th className="py-2.5 px-4">Status</th>
-                  <th className="py-2.5 px-4">Confidence</th>
-                  <th className="py-2.5 px-4">Started (UTC)</th>
-                  <th className="py-2.5 px-4 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border-subtle font-mono text-[11px]">
-                {incidents.slice(0, 5).map((inc) => (
-                  <tr key={inc.incident_id} className="hover:bg-surface-hover/60 transition-colors">
-                    <td className="py-2.5 px-4 font-semibold text-text-primary">
-                      {inc.incident_id}
-                    </td>
-                    <td className="py-2.5 px-4 text-text-primary">
-                      {inc.service}
-                    </td>
-                    <td className="py-2.5 px-4">
-                      <StatusBadge status={inc.severity} />
-                    </td>
-                    <td className="py-2.5 px-4">
-                      <StatusBadge status={inc.status} />
-                    </td>
-                    <td className="py-2.5 px-4 tabular-nums text-text-secondary">
-                      {Math.round(inc.confidence * 100)}%
-                    </td>
-                    <td className="py-2.5 px-4 text-text-muted tabular-nums">
-                      {inc.started_at.slice(11, 19)}
-                    </td>
-                    <td className="py-2.5 px-4 text-right">
-                      <button
-                        onClick={onNavigateToIncidents}
-                        className="text-accent hover:underline text-xs font-sans font-medium"
-                      >
-                        Review
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <section className="rounded-lg border border-border bg-surface shadow-card">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3"><h2 className="flex items-center gap-2 text-xs font-semibold"><AlertTriangle className="h-4 w-4 text-accent" />Persisted incidents</h2><button onClick={onNavigateToIncidents} className="text-xs text-accent">View all</button></div>
+        <div className="flex flex-wrap gap-4 border-b border-border px-4 py-2 text-[11px] text-text-secondary"><span>Open severity distribution among returned incidents:</span>{Object.entries(severityCounts).map(([severity, count]) => <span key={severity} className="capitalize">{severity} {incidentsAvailable ? count : 'Unavailable'}</span>)}</div>
+        {!shownIncidents.length ? <p className="p-6 text-center text-xs text-text-muted">{incidentsAvailable ? 'No persisted active or investigating incidents were returned.' : 'Incident data is unavailable.'}</p> : <div className="divide-y divide-border-subtle">{shownIncidents.map((incident) => <div key={incident.incident_id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-xs"><div><strong>{incident.service}</strong><span className="ml-2 font-mono text-text-muted">{incident.incident_id}</span><p className="mt-1 text-[11px] text-text-secondary">Correlated evidence; this is not a confirmed root cause.</p></div><div className="flex items-center gap-3"><span className="capitalize">{incident.severity} · {incident.status}</span><span className="text-text-muted">Last seen {time(incident.last_seen_at)}</span></div></div>)}</div>}
+      </section>
+      <p className="text-[10px] text-text-muted">SaaS response generated at {overview ? time(overview.generated_at) : 'Unavailable'}</p>
     </div>
   );
 };

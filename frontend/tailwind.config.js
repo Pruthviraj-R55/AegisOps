@@ -1,76 +1,22 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-  ],
+  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
       colors: {
-        app: "#F4F6F8",
-        surface: {
-          DEFAULT: "#FFFFFF",
-          secondary: "#F8FAFC",
-          hover: "#F1F5F9",
-        },
-        border: {
-          DEFAULT: "#E3E8ED",
-          subtle: "#EDF2F7",
-          focus: "#CBD5E1",
-        },
-        text: {
-          primary: "#17212B",
-          secondary: "#667085",
-          muted: "#98A2B3",
-        },
-        accent: {
-          DEFAULT: "#147D70",
-          light: "#E8F3F1",
-          hover: "#0F6258",
-        },
-        semantic: {
-          excellent: "#23865B",
-          excellentLight: "#EAF5F0",
-          good: "#3267C8",
-          goodLight: "#EFF4FC",
-          fair: "#B7791F",
-          fairLight: "#FEF7EC",
-          poor: "#C2414B",
-          poorLight: "#FDF2F2",
-        },
-        chart: {
-          cpu: "#147D70",
-          memory: "#3267C8",
-          disk: "#8B6BA8",
-          latency: "#147D70",
-          packetLoss: "#C2414B",
-          security: "#B7791F",
-        },
+        app: '#F1EFE8', paper: '#F1EFE8', ink: '#20211E', signal: '#B83A32',
+        surface: { DEFAULT: '#F8F7F2', secondary: '#E8E6DE', hover: '#E5E3DA' },
+        border: { DEFAULT: '#D8D5CB', subtle: '#E4E1D8', focus: '#AAA99F' },
+        text: { primary: '#20211E', secondary: '#65665E', muted: '#8D8E85' },
+        accent: { DEFAULT: '#B83A32', light: '#F3E4DF', hover: '#8F2D27' },
+        semantic: { excellent: '#55564F', excellentLight: '#E8E6DE', good: '#20211E', goodLight: '#E8E6DE', fair: '#62635D', fairLight: '#E8E6DE', poor: '#B83A32', poorLight: '#F3E4DF' },
+        chart: { cpu: '#B83A32', memory: '#20211E', disk: '#77786F', latency: '#B83A32', packetLoss: '#20211E', security: '#62635D' },
       },
       fontFamily: {
-        sans: [
-          "Inter",
-          "-apple-system",
-          "BlinkMacSystemFont",
-          "Segoe UI",
-          "Roboto",
-          "Helvetica Neue",
-          "sans-serif",
-        ],
-        mono: [
-          "JetBrains Mono",
-          "ui-monospace",
-          "SFMono-Regular",
-          "Menlo",
-          "Monaco",
-          "Consolas",
-          "monospace",
-        ],
+        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+        mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
       },
-      boxShadow: {
-        card: "0 1px 2px 0 rgba(16, 24, 40, 0.05)",
-        popover: "0 4px 6px -2px rgba(16, 24, 40, 0.05), 0 12px 16px -4px rgba(16, 24, 40, 0.08)",
-      },
+      boxShadow: { card: '0 1px 0 rgba(32,33,30,.06)', popover: '0 8px 24px rgba(32,33,30,.12)' },
     },
   },
   plugins: [],

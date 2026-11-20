@@ -24,9 +24,11 @@ def client():
 
 
 @pytest.fixture
-def valid_token():
-    """Default valid development token."""
-    return "dev-secret-token-12345"
+def valid_token(dev_tenant_id: str):
+    """Register a synthetic test token bound to the canonical test collector."""
+    token = f"test-token-{uuid.uuid4().hex}"
+    register_token(token, dev_tenant_id, "local-dev-collector")
+    return token
 
 
 @pytest.fixture
@@ -186,6 +188,7 @@ def test_ingest_registered_token_multi_tenant(client: TestClient):
     register_token(custom_token, custom_tenant, "collector-custom")
 
     payload = build_valid_payload(tenant_id=custom_tenant)
+    payload["collector_id"] = "collector-custom"
     headers = {"Authorization": f"Bearer {custom_token}"}
 
     response = client.post("/api/v1/ingest", json=payload, headers=headers)

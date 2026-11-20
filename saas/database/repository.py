@@ -1,11 +1,13 @@
 """Persistence, querying, and idempotency repository for telemetry records."""
 
 from datetime import datetime, timezone
+import base64
 import hashlib
 import json
+import logging
 from typing import Any, Optional
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -13,9 +15,12 @@ from saas.aiops.anomaly import detect_metric_anomalies
 from saas.aiops.correlation import correlate_anomalies
 from saas.aiops.health import evaluate_service_health
 from saas.api.errors import ProblemException
-from saas.database.models import IncidentRecord, PayloadIdempotency, TelemetryRecord
+from saas.config import get_settings
+from saas.database.models import IncidentEvidence, IncidentRecord, PayloadIdempotency, TelemetryRecord
 from saas.ingestion.schemas import TelemetryPayload
 from saas.processing.staleness import collector_freshness, is_stale
+
+logger = logging.getLogger("aegisops.saas.repository")
 
 
 def compute_payload_hash(payload_data: dict[str, Any]) -> str:
@@ -40,10 +45,178 @@ def parse_rfc3339_z(ts_str: str) -> datetime:
     return datetime.fromisoformat(ts_str)
 
 
+def _utc(dt: datetime) -> datetime:
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+
+
+def _signal_evidence(signal: Any) -> dict[str, Any]:
+    return {
+        "metric": signal.metric,
+        "observed_value": signal.current_value,
+        "baseline": signal.expected_value,
+        "sample_count": signal.sample_count,
+        "threshold": signal.threshold,
+        "deviation_score": signal.deviation_score,
+        "method": signal.method,
+        "severity": signal.severity,
+        "event_time": format_rfc3339_z(signal.timestamp),
+        "description": signal.description,
+    }
+
+
+def _find_correlated_active_incident(
+    session: Session,
+    *,
+    tenant_id: str,
+    service: str,
+    collector_id: str,
+    environment: str,
+    region: str | None,
+    event_time: datetime,
+    window_seconds: float,
+) -> IncidentRecord | None:
+    candidates = (
+        session.query(IncidentRecord)
+        .join(
+            IncidentEvidence,
+            and_(
+                IncidentEvidence.tenant_id == IncidentRecord.tenant_id,
+                IncidentEvidence.incident_id == IncidentRecord.incident_id,
+            ),
+        )
+        .join(
+            TelemetryRecord,
+            and_(
+                TelemetryRecord.tenant_id == IncidentEvidence.tenant_id,
+                TelemetryRecord.payload_id == IncidentEvidence.payload_id,
+            ),
+        )
+        .filter(
+            IncidentRecord.tenant_id == tenant_id,
+            IncidentRecord.status == "active",
+            TelemetryRecord.service == service,
+            TelemetryRecord.collector_id == collector_id,
+            TelemetryRecord.environment == environment,
+            TelemetryRecord.region == region,
+        )
+        .distinct()
+        .all()
+    )
+    nearest: tuple[float, IncidentRecord] | None = None
+    for candidate in candidates:
+        evidence_times = (
+            session.query(IncidentEvidence.event_time)
+            .filter_by(tenant_id=tenant_id, incident_id=candidate.incident_id)
+            .all()
+        )
+        times = [_utc(item[0]) for item in evidence_times]
+        if not times:
+            continue
+        distance = min(abs((_utc(event_time) - item).total_seconds()) for item in times)
+        if distance <= window_seconds and (nearest is None or distance < nearest[0]):
+            nearest = (distance, candidate)
+    return nearest[1] if nearest else None
+
+
+def _detect_and_persist_incident(
+    session: Session,
+    record: TelemetryRecord,
+    payload: TelemetryPayload,
+) -> None:
+    event_time = _utc(record.event_time)
+    recent_history = (
+        session.query(TelemetryRecord)
+        .filter(
+            TelemetryRecord.tenant_id == record.tenant_id,
+            TelemetryRecord.service == record.service,
+            TelemetryRecord.collector_id == record.collector_id,
+            TelemetryRecord.environment == record.environment,
+            TelemetryRecord.region == record.region,
+            TelemetryRecord.event_time < event_time,
+            TelemetryRecord.id != record.id,
+        )
+        .order_by(TelemetryRecord.event_time.desc(), TelemetryRecord.id.desc())
+        .limit(50)
+        .all()
+    )
+    history_dicts = [
+        {"metrics": item.metrics, "security": item.security, "event_time": item.event_time}
+        for item in reversed(recent_history)
+    ]
+    current_dict = {
+        "metrics": payload.metrics.model_dump(mode="json", exclude_none=True),
+        "security": payload.security.model_dump(mode="json", exclude_none=True),
+        "event_time": event_time,
+    }
+    settings = get_settings()
+    window_seconds = settings.incident_correlation_window_seconds
+    anomalies = detect_metric_anomalies(history_dicts, current_dict)
+    correlated = correlate_anomalies(
+        service=record.service,
+        anomalies=anomalies,
+        time_window_seconds=window_seconds,
+    )
+    if correlated is None:
+        return
+
+    incident = _find_correlated_active_incident(
+        session,
+        tenant_id=record.tenant_id,
+        service=record.service,
+        collector_id=record.collector_id,
+        environment=record.environment,
+        region=record.region,
+        event_time=event_time,
+        window_seconds=window_seconds,
+    )
+    if incident is None:
+        incident = IncidentRecord(
+            tenant_id=record.tenant_id,
+            incident_id=correlated.incident_id,
+            service=record.service,
+            severity=correlated.severity,
+            status="active",
+            started_at=event_time,
+            last_seen_at=event_time,
+            contributing_signals=[],
+            confidence=correlated.confidence,
+            recommended_action=correlated.recommended_action,
+            rollback_plan=correlated.rollback_plan,
+        )
+        session.add(incident)
+        session.flush()
+    else:
+        incident.started_at = min(_utc(incident.started_at), event_time)
+        incident.last_seen_at = max(_utc(incident.last_seen_at), event_time)
+        severity_order = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+        if severity_order.get(correlated.severity, 0) > severity_order.get(incident.severity, 0):
+            incident.severity = correlated.severity
+        incident.confidence = max(incident.confidence, correlated.confidence)
+        incident.recommended_action = correlated.recommended_action
+        incident.rollback_plan = correlated.rollback_plan
+
+    merged_signals = list(incident.contributing_signals or [])
+    for signal in correlated.contributing_signals:
+        if signal not in merged_signals:
+            merged_signals.append(signal)
+    incident.contributing_signals = merged_signals
+
+    session.add(
+        IncidentEvidence(
+            tenant_id=record.tenant_id,
+            incident_id=incident.incident_id,
+            payload_id=record.payload_id,
+            event_time=event_time,
+            signals=[_signal_evidence(signal) for signal in anomalies],
+        )
+    )
+
+
 def record_telemetry(
     session: Session,
     payload: TelemetryPayload,
     authenticated_tenant_id: str,
+    authenticated_collector_id: str,
 ) -> tuple[datetime, bool]:
     """
     Persist telemetry record with idempotency semantics.
@@ -52,14 +225,22 @@ def record_telemetry(
         tuple[datetime, bool]: (ingested_at, is_duplicate)
 
     Raises:
-        ProblemException: 403 on tenant mismatch, 409 on idempotency conflict.
+        ProblemException: 403 on tenant/collector mismatch, 409 on idempotency conflict.
     """
     if payload.tenant_id != authenticated_tenant_id:
         raise ProblemException(
             status_code=403,
             code="tenant_mismatch",
             title="Forbidden",
-            detail=f"Payload tenant '{payload.tenant_id}' does not match authenticated tenant '{authenticated_tenant_id}'.",
+            detail="Payload tenant does not match the authenticated credential.",
+        )
+
+    if payload.collector_id != authenticated_collector_id:
+        raise ProblemException(
+            status_code=403,
+            code="collector_mismatch",
+            title="Forbidden",
+            detail="Payload collector does not match the authenticated credential.",
         )
 
     payload_dict = payload.model_dump(mode="json")
@@ -116,66 +297,31 @@ def record_telemetry(
 
     session.add(record)
     session.add(idempotency)
-
-    # Trigger AIOps anomaly detection and correlation
     try:
-        recent_history = (
-            session.query(TelemetryRecord)
-            .filter_by(tenant_id=payload.tenant_id, service=payload.service)
-            .order_by(TelemetryRecord.event_time.desc())
-            .limit(10)
-            .all()
+        session.flush()
+    except IntegrityError:
+        session.rollback()
+        existing = (
+            session.query(PayloadIdempotency)
+            .filter_by(tenant_id=payload.tenant_id, payload_id=payload_id_str)
+            .first()
         )
-        history_dicts = [
-            {
-                "metrics": r.metrics,
-                "security": r.security,
-                "event_time": r.event_time,
-            }
-            for r in recent_history
-        ]
-        current_dict = {
-            "metrics": payload.metrics.model_dump(mode="json", exclude_none=True),
-            "security": payload.security.model_dump(mode="json", exclude_none=True),
-            "event_time": event_dt,
-        }
-        anomalies = detect_metric_anomalies(history_dicts, current_dict)
-        if anomalies:
-            correlated = correlate_anomalies(service=payload.service, anomalies=anomalies)
-            if correlated:
-                active_inc = (
-                    session.query(IncidentRecord)
-                    .filter_by(tenant_id=payload.tenant_id, service=payload.service, status="active")
-                    .first()
-                )
-                if active_inc:
-                    active_inc.last_seen_at = event_dt
-                    active_inc.confidence = correlated.confidence
-                    active_inc.severity = correlated.severity
-                    combined_signals = list(
-                        set(active_inc.contributing_signals + correlated.contributing_signals)
-                    )
-                    active_inc.contributing_signals = combined_signals
-                    active_inc.recommended_action = correlated.recommended_action
-                    active_inc.rollback_plan = correlated.rollback_plan
-                else:
-                    inc_record = IncidentRecord(
-                        tenant_id=payload.tenant_id,
-                        incident_id=correlated.incident_id,
-                        service=correlated.service,
-                        severity=correlated.severity,
-                        status="active",
-                        started_at=parse_rfc3339_z(correlated.started_at),
-                        last_seen_at=parse_rfc3339_z(correlated.last_seen_at),
-                        contributing_signals=correlated.contributing_signals,
-                        confidence=correlated.confidence,
-                        recommended_action=correlated.recommended_action,
-                        rollback_plan=correlated.rollback_plan,
-                    )
-                    session.add(inc_record)
+        if existing is not None and existing.payload_hash == payload_hash:
+            return existing.ingested_at, True
+        raise ProblemException(
+            status_code=409,
+            code="idempotency_conflict",
+            title="Conflict",
+            detail="Payload ID was already used with different content.",
+        ) from None
+
+    # Keep telemetry durable even if detection fails, but isolate detector writes
+    # in a savepoint so a failed incident query cannot poison the ingest transaction.
+    try:
+        with session.begin_nested():
+            _detect_and_persist_incident(session, record, payload)
     except Exception:
-        # AIOps analysis failure must never impede reliable telemetry ingestion
-        pass
+        logger.error("Deterministic detection failed; telemetry will still be committed")
 
     try:
         session.commit()
@@ -197,6 +343,133 @@ def record_telemetry(
             title="Conflict",
             detail=f"Payload ID '{payload_id_str}' was previously ingested with different content.",
         )
+
+
+def encode_history_cursor(event_time: datetime, payload_id: str) -> str:
+    """Encode the event-time/payload keyset cursor as an opaque URL-safe token."""
+    value = json.dumps([format_rfc3339_z(_utc(event_time)), payload_id], separators=(",", ":"))
+    return base64.urlsafe_b64encode(value.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def decode_history_cursor(cursor: str) -> tuple[datetime, str]:
+    """Decode a history cursor, rejecting malformed input without leaking details."""
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        event_time, payload_id = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+        if not isinstance(event_time, str) or not isinstance(payload_id, str) or not payload_id:
+            raise ValueError
+        parsed_time = parse_rfc3339_z(event_time)
+        if parsed_time.tzinfo is None:
+            raise ValueError
+        return _utc(parsed_time), payload_id
+    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+        raise ValueError("invalid history cursor") from None
+
+
+def get_tenant_telemetry_history(
+    session: Session,
+    tenant_id: str,
+    *,
+    limit: int = 50,
+    cursor: str | None = None,
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
+    security_only: bool = False,
+) -> dict[str, Any]:
+    """Return tenant-scoped telemetry in event-time order with keyset pagination."""
+    query = session.query(TelemetryRecord).filter(TelemetryRecord.tenant_id == tenant_id)
+    if start_time is not None:
+        query = query.filter(TelemetryRecord.event_time >= _utc(start_time))
+    if end_time is not None:
+        query = query.filter(TelemetryRecord.event_time <= _utc(end_time))
+    if security_only:
+        failed_logins = func.coalesce(TelemetryRecord.security["failed_login_count"].as_integer(), 0)
+        suspicious = func.coalesce(TelemetryRecord.security["suspicious_activity_count"].as_integer(), 0)
+        query = query.filter(or_(failed_logins > 0, suspicious > 0))
+    if cursor:
+        cursor_time, cursor_payload_id = decode_history_cursor(cursor)
+        query = query.filter(
+            or_(
+                TelemetryRecord.event_time < cursor_time,
+                and_(
+                    TelemetryRecord.event_time == cursor_time,
+                    TelemetryRecord.payload_id < cursor_payload_id,
+                ),
+            )
+        )
+
+    records = (
+        query.order_by(TelemetryRecord.event_time.desc(), TelemetryRecord.payload_id.desc())
+        .limit(limit + 1)
+        .all()
+    )
+    has_more = len(records) > limit
+    page = records[:limit]
+    items = [
+        {
+            "payload_id": record.payload_id,
+            "collector_id": record.collector_id,
+            "schema_version": record.schema_version,
+            "event_time": format_rfc3339_z(record.event_time),
+            "ingested_at": format_rfc3339_z(record.ingested_at),
+            "service": record.service,
+            "environment": record.environment,
+            "region": record.region,
+            "metrics": record.metrics,
+            "security": record.security,
+            "health": record.health,
+        }
+        for record in page
+    ]
+    next_cursor = encode_history_cursor(page[-1].event_time, page[-1].payload_id) if has_more and page else None
+    return {"items": items, "next_cursor": next_cursor, "has_more": has_more, "limit": limit}
+
+
+def get_tenant_incident_evidence(
+    session: Session,
+    tenant_id: str,
+    incident_id: str,
+) -> list[dict[str, Any]] | None:
+    """Return persisted telemetry references for an incident, or None if out of scope."""
+    incident_exists = (
+        session.query(IncidentRecord.id)
+        .filter_by(tenant_id=tenant_id, incident_id=incident_id)
+        .first()
+    )
+    if incident_exists is None:
+        return None
+    rows = (
+        session.query(IncidentEvidence, TelemetryRecord)
+        .join(
+            TelemetryRecord,
+            and_(
+                TelemetryRecord.tenant_id == IncidentEvidence.tenant_id,
+                TelemetryRecord.payload_id == IncidentEvidence.payload_id,
+            ),
+        )
+        .filter(
+            IncidentEvidence.tenant_id == tenant_id,
+            IncidentEvidence.incident_id == incident_id,
+            TelemetryRecord.tenant_id == tenant_id,
+        )
+        .order_by(IncidentEvidence.event_time.asc(), IncidentEvidence.payload_id.asc())
+        .all()
+    )
+    return [
+        {
+            "payload_id": evidence.payload_id,
+            "event_time": format_rfc3339_z(evidence.event_time),
+            "ingested_at": format_rfc3339_z(record.ingested_at),
+            "service": record.service,
+            "collector_id": record.collector_id,
+            "environment": record.environment,
+            "region": record.region,
+            "metrics": record.metrics,
+            "security": record.security,
+            "signals": evidence.signals,
+        }
+        for evidence, record in rows
+    ]
 
 
 def get_tenant_services(

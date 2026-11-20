@@ -8,8 +8,10 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+from collector.adapters.json_file import AdapterRecordError
+from collector.adapters.protocol import TelemetryAdapter
 from collector.config import CollectorSettings
-from collector.normalization.pipeline import TelemetryNormalizer, serialize_payload
+from collector.normalization.pipeline import InvalidTelemetry, TelemetryNormalizer, serialize_payload
 from collector.queue.sqlite_queue import SQLiteQueue
 from collector.transport.delivery import DeliveryClient
 
@@ -92,6 +94,21 @@ class CollectorService:
             "duplicate": not created,
             "queue_duration_ms": self.last_queue_duration_ms,
         }
+
+    async def ingest_adapter(self, adapter: TelemetryAdapter) -> int:
+        """Process adapter events through the same normalizer and durable queue."""
+        queued_count = 0
+        async for raw_event in adapter.events():
+            try:
+                await self.ingest(raw_event)
+            except InvalidTelemetry as exc:
+                source_name = getattr(adapter, "source_name", "adapter")
+                record_number = getattr(adapter, "current_record_number", queued_count + 1)
+                raise AdapterRecordError(
+                    str(source_name), record_number, "invalid_telemetry", str(exc)
+                ) from None
+            queued_count += 1
+        return queued_count
 
     async def health(self) -> dict[str, Any]:
         counts = await self.queue.counts()

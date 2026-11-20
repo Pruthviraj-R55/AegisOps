@@ -1,7 +1,8 @@
-"""Alert correlation into operational incidents with remediation & rollback plans."""
+"""Correlate anomaly evidence; correlation does not establish root cause."""
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import math
 from typing import Optional
 import uuid
 
@@ -40,6 +41,8 @@ def correlate_anomalies(
     """
     if not anomalies:
         return None
+    if not math.isfinite(time_window_seconds) or time_window_seconds < 0:
+        raise ValueError("time_window_seconds must be a finite non-negative number")
 
     # Filter signals within the time window relative to the latest signal
     sorted_signals = sorted(anomalies, key=lambda a: a.timestamp)
@@ -49,8 +52,7 @@ def correlate_anomalies(
         if (latest_time - s.timestamp).total_seconds() <= time_window_seconds
     ]
 
-    if not window_signals:
-        window_signals = sorted_signals
+    # The newest signal is in its own window; older outliers are excluded.
 
     started_at = window_signals[0].timestamp
     last_seen_at = window_signals[-1].timestamp

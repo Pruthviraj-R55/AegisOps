@@ -4,12 +4,12 @@
 
 export interface TelemetryDataPoint {
   timestamp: string; // ISO event_time (RFC 3339 UTC)
-  displayTime: string; // HH:mm:ss UTC
-  cpu: number;
-  memory: number;
-  disk: number;
-  latency: number;
-  packetLoss: number;
+  displayTime: string; // UTC timestamp formatted for the chart
+  cpu?: number;
+  memory?: number;
+  disk?: number;
+  latency?: number;
+  packetLoss?: number;
   bandwidth?: number;
   failedLogins?: number;
 }
@@ -30,6 +30,7 @@ export interface SanitizedEventLog {
 export type ActiveNavView =
   | 'overview'
   | 'infrastructure'
+  | 'performance'
   | 'network'
   | 'security'
   | 'incidents'

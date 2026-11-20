@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   KeyRound,
+  LogOut,
   Pause,
   Play,
   RefreshCw,
@@ -10,20 +11,23 @@ import { ActiveNavView } from '../types/telemetry';
 
 interface HeaderProps {
   currentView: ActiveNavView;
-  currentTenant: string;
   currentToken: string;
+  localDevelopmentAuth: boolean;
+  isAuthenticated: boolean;
   onOpenTokenModal: () => void;
+  onSignOut: () => void;
   isPolling: boolean;
   onTogglePolling: () => void;
   onManualRefresh: () => void;
   isRefreshing: boolean;
   lastSyncTime: string | null;
-  collectorOnline: boolean;
+  collectorStatus: 'online' | 'stale' | 'offline' | 'unavailable';
 }
 
 const VIEW_TITLES: Record<ActiveNavView, { category: string; title: string }> = {
   overview: { category: 'Monitoring', title: 'Executive Fleet Overview' },
   infrastructure: { category: 'Monitoring', title: 'Hardware & Infrastructure' },
+  performance: { category: 'Monitoring', title: 'Performance History' },
   network: { category: 'Monitoring', title: 'Network Telemetry' },
   security: { category: 'Monitoring', title: 'Security & Audit Stream' },
   incidents: { category: 'Intelligence', title: 'Correlated Incidents' },
@@ -36,12 +40,16 @@ const VIEW_TITLES: Record<ActiveNavView, { category: string; title: string }> = 
 export const Header: React.FC<HeaderProps> = ({
   currentView,
   currentToken,
+  localDevelopmentAuth,
+  isAuthenticated,
   onOpenTokenModal,
+  onSignOut,
   isPolling,
   onTogglePolling,
   onManualRefresh,
   isRefreshing,
-  collectorOnline,
+  lastSyncTime,
+  collectorStatus,
 }) => {
   const [utcTime, setUtcTime] = React.useState('');
 
@@ -57,10 +65,8 @@ export const Header: React.FC<HeaderProps> = ({
 
   const meta = VIEW_TITLES[currentView] || { category: 'Observability', title: 'Dashboard' };
 
-  // Mask token for display
-  const maskedToken = currentToken
-    ? `${currentToken.slice(0, 4)}...${currentToken.slice(-4)}`
-    : 'None';
+  // Never render token bytes; show only whether one is configured.
+  const tokenStatus = currentToken ? 'Configured' : 'Not set';
 
   return (
     <header className="h-14 border-b border-border bg-surface px-6 flex items-center justify-between sticky top-0 z-20">
@@ -73,47 +79,51 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Header Actions Strip */}
       <div className="flex items-center gap-3">
-        {/* Zero-Egress Privacy Assurance Pill */}
         <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded bg-accent-light text-accent text-xs font-medium">
           <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
-          <span>Zero Raw Logs Egress</span>
+          <span>Metadata-only SaaS contract</span>
         </div>
 
         {/* Collector Status Indicator */}
         <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded border border-border text-[11px] font-mono text-text-secondary bg-surface-secondary">
           <span
             className={`w-2 h-2 rounded-full ${
-              collectorOnline ? 'bg-semantic-excellent' : 'bg-text-muted'
+              collectorStatus === 'online' ? 'bg-semantic-excellent' : collectorStatus === 'stale' ? 'bg-[#62635D]' : 'bg-text-muted'
             }`}
           />
-          <span>Tier 1: {collectorOnline ? '8100' : 'Offline'}</span>
+          <span>SaaS collector: {collectorStatus}</span>
         </div>
 
-        {/* Tenant Token Switcher Button */}
-        <button
-          onClick={onOpenTokenModal}
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-border bg-surface hover:bg-surface-hover text-xs font-mono text-text-primary transition-colors"
-          title="Click to view or switch Tenant Bearer Token"
-        >
-          <KeyRound className="h-3.5 w-3.5 text-text-muted" />
-          <span className="text-text-muted">Token:</span>
-          <span className="font-semibold text-accent">{maskedToken}</span>
-        </button>
+        {localDevelopmentAuth ? (
+          <button
+            onClick={onOpenTokenModal}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-border bg-surface hover:bg-surface-hover text-xs font-mono text-text-primary transition-colors"
+            title="Explicit local development credential"
+          >
+            <KeyRound className="h-3.5 w-3.5 text-text-muted" />
+            <span className="text-text-muted">Local API:</span>
+            <span className="font-semibold text-accent">{tokenStatus}</span>
+          </button>
+        ) : isAuthenticated ? (
+          <button onClick={onSignOut} className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-border hover:bg-surface-hover text-xs text-text-secondary">
+            <LogOut className="h-3.5 w-3.5" /> Sign out
+          </button>
+        ) : null}
 
         {/* Live Polling Toggle */}
         <button
           onClick={onTogglePolling}
           className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-mono font-medium border transition-colors ${
             isPolling
-              ? 'border-semantic-excellent/30 bg-[#EAF5F0] text-semantic-excellent hover:bg-[#DDF0E7]'
+              ? 'border-semantic-excellent/30 bg-[#E7E5DD] text-semantic-excellent hover:bg-[#E5E3DA]'
               : 'border-border bg-surface-secondary text-text-muted hover:bg-surface-hover'
           }`}
-          title={isPolling ? 'Polling active (3s). Click to pause.' : 'Polling paused. Click to resume.'}
+          title={isPolling ? 'Polling active (30s). Click to pause.' : 'Polling paused. Click to resume.'}
         >
           {isPolling ? (
             <>
               <span className="w-1.5 h-1.5 rounded-full bg-semantic-excellent animate-pulse" />
-              <span>LIVE 3s</span>
+              <span>LIVE 30s</span>
               <Pause className="h-3 w-3 ml-0.5 opacity-60" />
             </>
           ) : (
@@ -123,6 +133,8 @@ export const Header: React.FC<HeaderProps> = ({
             </>
           )}
         </button>
+
+        {lastSyncTime && <span className="hidden xl:inline text-[10px] font-mono text-text-muted">Updated {lastSyncTime.slice(11, 19)} UTC</span>}
 
         {/* Manual Refresh Button */}
         <button

@@ -80,3 +80,17 @@ uv run --locked --extra collector --extra dev python -m pytest tests/collector -
 ```
 
 The tests use temporary SQLite files and `httpx.MockTransport`; they require no organizer stream or live SaaS service.
+
+## Generic JSON and JSONL file ingestion
+
+`JsonFileAdapter` reads a single JSON object, a JSON array of objects, or JSONL/NDJSON and maps source fields to the collector's internal event shape. Configure canonical target paths and source paths explicitly; only mapped fields leave the adapter. ISO-8601 timestamps with a timezone are normalized to UTC, or configure numeric Unix seconds/milliseconds. Adapter errors include a safe source basename, record number, stable error code, and message; source values and raw records are not included. Processing stops at the first malformed record so later records are not silently treated as a clean import.
+
+JSONL is read one line at a time and is preferred for large inputs. JSON arrays are currently parsed as one JSON document in memory. `max_record_bytes` limits individual JSONL records. Optional local aggregation can be configured per canonical numeric metric/security field using `mean`, `sum`, `min`, `max`, or `last`; it emits one summary per service/environment/region for that file, uses the latest event-time health, and keeps numeric accumulators rather than raw source records. Aggregation is opt-in: choose it only when input rows are measurements/events rather than already summarized telemetry. A source health value must still be mapped because the existing contract requires health and this adapter does not invent it.
+
+The import command sends every mapped event through `CollectorService.ingest`, preserving pseudonymization, scrubbing, allow-listing, Pydantic/JSON Schema validation, SQLite queueing, and the existing egress approval gate. If a later record fails, earlier valid records remain safely queued and the command exits with a record-specific error; map a stable source event ID to `event_id` to make a corrected re-import idempotent:
+
+```powershell
+uv run --locked --extra collector python -m collector.ingest_file .\path\to\events.jsonl --mapping .\path\to\mapping.json
+```
+
+The example files under `examples/telemetry/` are synthetic fixtures only. Copy and edit the mapping for a source format; do not use the example values as production identity or telemetry configuration. Tenant/collector identity and privacy keys continue to come only from collector configuration, never from the source mapping.

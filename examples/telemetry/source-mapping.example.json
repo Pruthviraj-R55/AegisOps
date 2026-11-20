@@ -1,0 +1,15 @@
+{
+  "field_mapping": {
+    "event_id": "event.key",
+    "event_time": "observed_at",
+    "service": "component.name",
+    "environment": "deployment.stage",
+    "region": "location.zone",
+    "health": "status",
+    "metrics.cpu_percent": "measurements.cpu",
+    "metrics.latency_ms": "measurements.request_latency_ms",
+    "security.failed_login_count": "counters.failed_logins"
+  },
+  "timestamp_format": "iso8601",
+  "max_record_bytes": 1048576
+}

@@ -33,6 +33,7 @@ export const InfrastructureView: React.FC<InfrastructureViewProps> = ({
   selectedService,
   onSelectService,
   telemetryHistory,
+  isLoading,
 }) => {
   const [searchTerm, setSearchTerm] = React.useState('');
 
@@ -68,7 +69,7 @@ export const InfrastructureView: React.FC<InfrastructureViewProps> = ({
     ? telemetryHistory[activeServiceObj.service] || []
     : [];
 
-  const hasHistory = currentHistory.length >= 2;
+  const hasHistory = currentHistory.length > 0;
 
   return (
     <div className="space-y-6">
@@ -153,23 +154,23 @@ export const InfrastructureView: React.FC<InfrastructureViewProps> = ({
                 Waiting for telemetry history...
               </p>
               <p className="text-[11px] text-text-muted font-mono mt-1">
-                Accumulating real-time samples for {activeServiceObj?.service || 'service'} from SaaS API.
+                No persisted samples were returned for {activeServiceObj?.service || 'this service'}.
               </p>
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={currentHistory} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#EDF2F7" vertical={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#D8D5CB" vertical={false} />
                 <XAxis
                   dataKey="displayTime"
-                  stroke="#8C9BA5"
+                  stroke="#8D8E85"
                   fontSize={10}
                   tickLine={false}
                   fontFamily="JetBrains Mono, monospace"
                 />
                 <YAxis
                   domain={[0, 100]}
-                  stroke="#8C9BA5"
+                  stroke="#8D8E85"
                   fontSize={10}
                   tickLine={false}
                   fontFamily="JetBrains Mono, monospace"
@@ -177,8 +178,8 @@ export const InfrastructureView: React.FC<InfrastructureViewProps> = ({
                 />
                 <Tooltip
                   contentStyle={{
-                    backgroundColor: '#FFFFFF',
-                    borderColor: '#E3E8ED',
+                    backgroundColor: '#F8F7F2',
+                    borderColor: '#D8D5CB',
                     borderRadius: '6px',
                     fontSize: '11px',
                     fontFamily: 'JetBrains Mono, monospace',
@@ -189,7 +190,7 @@ export const InfrastructureView: React.FC<InfrastructureViewProps> = ({
                   type="monotone"
                   dataKey="cpu"
                   name="CPU %"
-                  stroke="#147D70"
+                  stroke="#B83A32"
                   strokeWidth={2}
                   dot={false}
                   isAnimationActive={false}
@@ -198,7 +199,7 @@ export const InfrastructureView: React.FC<InfrastructureViewProps> = ({
                   type="monotone"
                   dataKey="memory"
                   name="Memory %"
-                  stroke="#3267C8"
+                  stroke="#20211E"
                   strokeWidth={2}
                   dot={false}
                   isAnimationActive={false}
@@ -207,7 +208,7 @@ export const InfrastructureView: React.FC<InfrastructureViewProps> = ({
                   type="monotone"
                   dataKey="disk"
                   name="Disk %"
-                  stroke="#8B6BA8"
+                  stroke="#77786F"
                   strokeWidth={1.5}
                   dot={false}
                   isAnimationActive={false}
@@ -263,7 +264,7 @@ export const InfrastructureView: React.FC<InfrastructureViewProps> = ({
                 const isSelected = activeServiceObj?.service === svc.service;
                 return (
                   <tr
-                    key={svc.service}
+                    key={`${svc.service}:${svc.environment}:${svc.region || ''}`}
                     onClick={() => onSelectService(svc.service)}
                     className={`cursor-pointer transition-colors ${
                       isSelected
@@ -276,7 +277,7 @@ export const InfrastructureView: React.FC<InfrastructureViewProps> = ({
                       {svc.service}
                     </td>
                     <td className="py-2.5 px-4 text-text-secondary">{svc.environment}</td>
-                    <td className="py-2.5 px-4 text-text-muted">{svc.region || 'global'}</td>
+                    <td className="py-2.5 px-4 text-text-muted">{svc.region || 'Unavailable'}</td>
                     <td className="py-2.5 px-4">
                       <StatusBadge status={svc.health} isStale={svc.stale} />
                     </td>
@@ -293,13 +294,14 @@ export const InfrastructureView: React.FC<InfrastructureViewProps> = ({
                       {svc.metrics.disk_percent?.toFixed(1) ?? '--'}%
                     </td>
                     <td className="py-2.5 px-4 tabular-nums text-text-muted">
-                      {svc.last_event_time ? svc.last_event_time.slice(11, 19) : '--:--:--'}
+                      {svc.last_event_time ? `${new Date(svc.last_event_time).toLocaleString(undefined, { timeZone: 'UTC', hour12: false })} UTC` : 'Unavailable'}
                     </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
+          {filteredServices.length === 0 && <p className="border-t border-border-subtle p-6 text-center text-xs text-text-muted">{isLoading ? 'Loading service health…' : services.length ? 'No services match this filter.' : 'Service health data is unavailable or no services have been returned.'}</p>}
         </div>
       </div>
     </div>

@@ -33,8 +33,7 @@ export class CollectorClient {
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Collector API Error (${response.status}): ${errorText}`);
+      throw new Error(`Collector API request failed (${response.status}).`);
     }
 
     if (response.status === 204) {

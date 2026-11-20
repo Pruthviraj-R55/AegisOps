@@ -1,163 +1,27 @@
 import React from 'react';
 
-export type StatusBadgeVariant =
-  | 'excellent'
-  | 'good'
-  | 'fair'
-  | 'poor'
-  | 'online'
-  | 'stale'
-  | 'offline'
-  | 'active'
-  | 'investigating'
-  | 'resolved'
-  | 'critical'
-  | 'high'
-  | 'medium'
-  | 'low';
+interface StatusBadgeProps { status: string; label?: string; isStale?: boolean; className?: string }
 
-interface StatusBadgeProps {
-  status: string;
-  label?: string;
-  isStale?: boolean;
-  className?: string;
-}
+const variants: Record<string, { label: string; className: string; marker: string }> = {
+  excellent: { label: 'EXCELLENT', className: 'border-[#77786F] bg-[#E8E6DE] text-ink', marker: 'bg-[#55564F]' },
+  good: { label: 'GOOD', className: 'border-[#AAA99F] bg-[#F8F7F2] text-ink', marker: 'bg-ink' },
+  fair: { label: 'FAIR', className: 'border-[#8D8E85] bg-[#E8E6DE] text-ink', marker: 'bg-[#62635D]' },
+  poor: { label: 'POOR', className: 'border-signal bg-[#F3E4DF] text-[#8F2D27]', marker: 'bg-signal' },
+  online: { label: 'ONLINE', className: 'border-[#77786F] bg-[#E8E6DE] text-ink', marker: 'bg-ink' },
+  stale: { label: 'STALE', className: 'border-[#8D8E85] bg-[#E8E6DE] text-ink', marker: 'bg-[#62635D]' },
+  offline: { label: 'OFFLINE', className: 'border-[#AAA99F] bg-[#E8E6DE] text-ink', marker: 'bg-[#8D8E85]' },
+  active: { label: 'ACTIVE', className: 'border-signal bg-[#F3E4DF] text-[#8F2D27]', marker: 'bg-signal' },
+  investigating: { label: 'INVESTIGATING', className: 'border-[#77786F] bg-[#E8E6DE] text-ink', marker: 'bg-ink' },
+  resolved: { label: 'RESOLVED', className: 'border-[#AAA99F] bg-[#F8F7F2] text-ink', marker: 'bg-[#8D8E85]' },
+  critical: { label: 'CRITICAL', className: 'border-signal bg-[#F3E4DF] text-[#8F2D27]', marker: 'bg-signal' },
+  high: { label: 'HIGH', className: 'border-[#77786F] bg-[#E8E6DE] text-ink', marker: 'bg-ink' },
+  medium: { label: 'MEDIUM', className: 'border-[#AAA99F] bg-[#F8F7F2] text-ink', marker: 'bg-[#62635D]' },
+  low: { label: 'LOW', className: 'border-[#D8D5CB] bg-[#F8F7F2] text-[#65665E]', marker: 'bg-[#8D8E85]' },
+  informational: { label: 'INFORMATIONAL', className: 'border-[#D8D5CB] bg-[#F8F7F2] text-[#65665E]', marker: 'bg-[#8D8E85]' },
+};
 
-export const StatusBadge: React.FC<StatusBadgeProps> = ({
-  status,
-  label,
-  isStale,
-  className = '',
-}) => {
-  const norm = (status || '').toLowerCase();
-
-  if (isStale) {
-    return (
-      <span
-        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono font-medium border border-[#C2414B]/30 bg-[#FDF2F2] text-[#C2414B] ${className}`}
-      >
-        <span className="w-1.5 h-1.5 rounded-full bg-[#C2414B]" />
-        {label || 'POOR (STALE)'}
-      </span>
-    );
-  }
-
-  // Styles per status
-  const styleMap: Record<string, { bg: string; text: string; border: string; dot: string; textLabel: string }> = {
-    excellent: {
-      bg: 'bg-[#EAF5F0]',
-      text: 'text-[#23865B]',
-      border: 'border-[#23865B]/30',
-      dot: 'bg-[#23865B]',
-      textLabel: 'EXCELLENT',
-    },
-    good: {
-      bg: 'bg-[#EFF4FC]',
-      text: 'text-[#3267C8]',
-      border: 'border-[#3267C8]/30',
-      dot: 'bg-[#3267C8]',
-      textLabel: 'GOOD',
-    },
-    fair: {
-      bg: 'bg-[#FEF7EC]',
-      text: 'text-[#B7791F]',
-      border: 'border-[#B7791F]/30',
-      dot: 'bg-[#B7791F]',
-      textLabel: 'FAIR',
-    },
-    poor: {
-      bg: 'bg-[#FDF2F2]',
-      text: 'text-[#C2414B]',
-      border: 'border-[#C2414B]/30',
-      dot: 'bg-[#C2414B]',
-      textLabel: 'POOR',
-    },
-    online: {
-      bg: 'bg-[#EAF5F0]',
-      text: 'text-[#23865B]',
-      border: 'border-[#23865B]/30',
-      dot: 'bg-[#23865B]',
-      textLabel: 'ONLINE',
-    },
-    stale: {
-      bg: 'bg-[#FEF7EC]',
-      text: 'text-[#B7791F]',
-      border: 'border-[#B7791F]/30',
-      dot: 'bg-[#B7791F]',
-      textLabel: 'STALE',
-    },
-    offline: {
-      bg: 'bg-[#F1F5F9]',
-      text: 'text-[#64748B]',
-      border: 'border-[#CBD5E1]',
-      dot: 'bg-[#94A3B8]',
-      textLabel: 'OFFLINE',
-    },
-    critical: {
-      bg: 'bg-[#FDF2F2]',
-      text: 'text-[#C2414B]',
-      border: 'border-[#C2414B]/30',
-      dot: 'bg-[#C2414B]',
-      textLabel: 'CRITICAL',
-    },
-    high: {
-      bg: 'bg-[#FEF7EC]',
-      text: 'text-[#B7791F]',
-      border: 'border-[#B7791F]/30',
-      dot: 'bg-[#B7791F]',
-      textLabel: 'HIGH',
-    },
-    medium: {
-      bg: 'bg-[#EFF4FC]',
-      text: 'text-[#3267C8]',
-      border: 'border-[#3267C8]/30',
-      dot: 'bg-[#3267C8]',
-      textLabel: 'MEDIUM',
-    },
-    low: {
-      bg: 'bg-[#F8FAFC]',
-      text: 'text-[#64748B]',
-      border: 'border-[#E2E8F0]',
-      dot: 'bg-[#94A3B8]',
-      textLabel: 'LOW',
-    },
-    active: {
-      bg: 'bg-[#FDF2F2]',
-      text: 'text-[#C2414B]',
-      border: 'border-[#C2414B]/30',
-      dot: 'bg-[#C2414B]',
-      textLabel: 'ACTIVE',
-    },
-    investigating: {
-      bg: 'bg-[#FEF7EC]',
-      text: 'text-[#B7791F]',
-      border: 'border-[#B7791F]/30',
-      dot: 'bg-[#B7791F]',
-      textLabel: 'INVESTIGATING',
-    },
-    resolved: {
-      bg: 'bg-[#EAF5F0]',
-      text: 'text-[#23865B]',
-      border: 'border-[#23865B]/30',
-      dot: 'bg-[#23865B]',
-      textLabel: 'RESOLVED',
-    },
-  };
-
-  const style = styleMap[norm] || {
-    bg: 'bg-[#F8FAFC]',
-    text: 'text-[#64748B]',
-    border: 'border-[#E2E8F0]',
-    dot: 'bg-[#94A3B8]',
-    textLabel: status.toUpperCase(),
-  };
-
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono font-medium border ${style.border} ${style.bg} ${style.text} ${className}`}
-    >
-      <span className={`w-1.5 h-1.5 rounded-full ${style.dot}`} />
-      {label || style.textLabel}
-    </span>
-  );
+export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, label, isStale = false, className = '' }) => {
+  const normalized = isStale ? 'stale' : (status || 'unavailable').toLowerCase();
+  const variant = variants[normalized] || { label: normalized.toUpperCase(), className: 'border-[#D8D5CB] bg-[#F8F7F2] text-[#65665E]', marker: 'bg-[#8D8E85]' };
+  return <span aria-label={label || variant.label} className={`inline-flex items-center gap-2 border px-2 py-1 text-[10px] font-mono font-semibold tracking-wide ${variant.className} ${className}`}><span aria-hidden="true" className={`h-1.5 w-1.5 ${variant.marker}`} />{label || variant.label}</span>;
 };
