@@ -33,7 +33,7 @@ git clone <repository-url> AegisOps
 cd AegisOps
 ```
 
-The initial scaffold has no complete runnable application yet. Install the locked Python environment (Python 3.12 required):
+Install the locked Python environment (Python 3.12 required):
 
 ```powershell
 uv sync --locked --extra collector --extra dev
@@ -41,10 +41,18 @@ Copy-Item .env.example .env
 docker compose up -d postgres
 ```
 
+For the local collector, generate and configure `COLLECTOR_PSEUDONYMIZATION_KEY` as described in [`collector/README.md`](collector/README.md), then run:
+
+```powershell
+uv run --locked --extra collector python -m collector
+```
+
+The local API binds to `127.0.0.1:8100`. The SaaS and frontend remain implementation scaffolds and do not yet have runnable entry points.
+
 Run the current automated checks:
 
 ```powershell
-uv run --locked --extra dev python -m pytest
+uv run --locked --extra collector --extra dev python -m pytest
 ```
 
 The SaaS and frontend run commands will be added by their owners when those components have runnable entry points. See [`docs/TECH_STACK.md`](docs/TECH_STACK.md) for stack and locking policy, [`docs/ANTIGRAVITY_START_HERE.md`](docs/ANTIGRAVITY_START_HERE.md) for the independent Tier 2 bootstrap instructions, and [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) for ownership and sequence.
