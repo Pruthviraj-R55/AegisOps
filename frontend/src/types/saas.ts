@@ -1,0 +1,86 @@
+/**
+ * Exact TypeScript schemas matching saas/api/routes/dashboard.py
+ * and contracts/telemetry.schema.json
+ */
+
+export type HealthStatus = 'excellent' | 'good' | 'fair' | 'poor';
+
+export interface ServiceMetrics {
+  cpu_percent?: number;
+  memory_percent?: number;
+  disk_percent?: number;
+  bandwidth_mbps?: number;
+  latency_ms?: number;
+  packet_loss_percent?: number;
+}
+
+export interface ServiceItem {
+  service: string;
+  environment: string;
+  region: string | null;
+  health: HealthStatus;
+  health_score: number;
+  last_event_time: string;
+  stale: boolean;
+  metrics: ServiceMetrics;
+}
+
+export interface ServicesResponse {
+  items: ServiceItem[];
+}
+
+export interface DashboardOverview {
+  generated_at: string;
+  overall_health: HealthStatus;
+  service_counts: {
+    excellent: number;
+    good: number;
+    fair: number;
+    poor: number;
+  };
+  active_incident_count: number;
+  stale_service_count: number;
+}
+
+export type IncidentSeverity = 'critical' | 'high' | 'medium' | 'low';
+export type IncidentStatus = 'active' | 'investigating' | 'resolved';
+
+export interface IncidentItem {
+  incident_id: string;
+  service: string;
+  severity: IncidentSeverity;
+  status: IncidentStatus;
+  started_at: string;
+  last_seen_at: string;
+  contributing_signals: string[];
+  confidence: number;
+  recommended_action: string;
+  rollback_plan: string;
+}
+
+export interface IncidentsResponse {
+  items: IncidentItem[];
+}
+
+export type CollectorStatus = 'online' | 'stale' | 'offline';
+
+export interface CollectorItem {
+  collector_id: string;
+  status: CollectorStatus;
+  last_seen_at: string;
+  last_payload_id: string;
+  pending_count: number;
+}
+
+export interface CollectorsResponse {
+  items: CollectorItem[];
+}
+
+export interface ProblemDetail {
+  type: string;
+  title: string;
+  status: number;
+  code: string;
+  detail: string;
+  request_id?: string;
+}
