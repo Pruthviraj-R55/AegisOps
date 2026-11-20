@@ -1,0 +1,21 @@
+
+{
+  "event_id": "demo-event-001",
+  "event_time": "2026-11-20T11:00:00Z",
+  "service": "payment-api",
+  "environment": "production",
+  "region": "ap-south-1",
+  "metrics": {
+    "cpu_percent": 96,
+    "memory_percent": 88,
+    "latency_ms": 850,
+    "packet_loss_percent": 4.5
+  },
+  "security": {
+    "failed_login_count": 27,
+    "suspicious_activity_count": 5
+  },
+  "health": "poor",
+  "username": "admin@example.com",
+  "api_key": "sk-demo-secret-12345"
+}
