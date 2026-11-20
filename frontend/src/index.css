@@ -6,15 +6,19 @@
   color-scheme: dark;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   margin: 0;
-  background-color: #0B0E14;
+  background-color: #05070A;
   color: #E6EDF3;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   overflow-x: hidden;
 }
 
-/* Enforce tabular monospace for all numbers, IDs, and timestamps */
+/* Enforce tabular monospace for all numbers, metrics, IDs, and timestamps */
 .tabular-nums {
   font-variant-numeric: tabular-nums;
 }
@@ -25,21 +29,34 @@ body {
   letter-spacing: -0.02em;
 }
 
-/* Custom utilitarian scrollbar */
+/* Netdata / Grafana Glassmorphic Dark Bar */
+.glass-header {
+  background: rgba(12, 16, 23, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid #1B2230;
+}
+
+/* Section scroll-reveal smooth transition */
+.reveal-section {
+  transition: opacity 0.4s ease-out, transform 0.4s ease-out;
+}
+
+/* Custom utilitarian Netdata scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #0B0E14;
+  background: #05070A;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #222836;
-  border-radius: 3px;
+  background: #1B2230;
+  border-radius: 2px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #2E364A;
+  background: #2A364E;
 }

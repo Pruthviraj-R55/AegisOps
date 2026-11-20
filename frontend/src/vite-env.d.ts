@@ -4,6 +4,7 @@ interface ImportMetaEnv {
   readonly VITE_SAAS_API_URL?: string;
   readonly VITE_COLLECTOR_EGRESS_URL?: string;
   readonly VITE_COLLECTOR_API_URL?: string;
+  readonly VITE_SAAS_TOKEN?: string;
   readonly VITE_DEFAULT_TENANT_TOKEN?: string;
 }
 

@@ -96,9 +96,10 @@ export const EgressProofPanel: React.FC<EgressProofPanelProps> = ({ collectorCli
           suspicious_activity_count: 0,
         },
         health: 'good',
-        // Inject untrusted/raw fields that MUST be scrubbed/excluded
-        untrusted_raw_logs: 'FATAL: database query password=SuperSecretToken123',
-        api_token: 'secret-token-that-must-be-scrubbed',
+        // Inject sensitive raw fields that MUST be scrubbed locally
+        raw_database_query: 'SELECT * FROM users WHERE password="UnscrubbedPassword123";',
+        api_secret_key: 'sk_live_secret_token_never_leave_premise',
+        untrusted_tenant_id: 'spoofed-tenant-should-be-ignored',
       };
 
       await collectorClient.sendDevelopmentTelemetry(sampleEvent);
@@ -121,7 +122,7 @@ export const EgressProofPanel: React.FC<EgressProofPanelProps> = ({ collectorCli
       {/* Privacy Guarantee Header Banner */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-border bg-surface px-4 py-3">
         <div className="flex items-center gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded bg-health-excellent/10 text-health-excellent">
+          <div className="flex h-8 w-8 items-center justify-center rounded bg-accent-emerald/10 text-accent-emerald ring-1 ring-accent-emerald/30">
             <Lock className="h-4 w-4" />
           </div>
           <div>
@@ -129,12 +130,12 @@ export const EgressProofPanel: React.FC<EgressProofPanelProps> = ({ collectorCli
               <h3 className="text-xs font-bold uppercase tracking-wider text-text-primary">
                 Tier 1 Local Collector: Live Egress Proof Panel
               </h3>
-              <span className="rounded bg-health-excellent/10 border border-health-excellent/30 px-2 py-0.5 text-[10px] font-mono text-health-excellent font-semibold">
-                PRIVACY BOUNDARY VERIFIED
+              <span className="rounded bg-accent-emerald/10 border border-accent-emerald/30 px-2 py-0.5 text-[10px] font-mono text-accent-emerald font-semibold">
+                PRE-TRANSMISSION PRIVACY BOUNDARY
               </span>
             </div>
             <p className="text-[11px] text-text-muted mt-0.5">
-              Live inspection of outbound telemetry payloads BEFORE they leave customer premises. Polled directly from Tier 1 Local Collector API on <code className="text-series-cpu font-mono">{collectorClient.getBaseUrl()}</code>.
+              Live inspection of outbound telemetry payloads BEFORE they leave customer premises. Polled directly from Tier 1 Local Collector API on <code className="text-accent-emerald font-mono">{collectorClient.getBaseUrl()}</code>.
             </p>
           </div>
         </div>
@@ -145,7 +146,7 @@ export const EgressProofPanel: React.FC<EgressProofPanelProps> = ({ collectorCli
             disabled={isLoading}
             className="flex items-center gap-1.5 rounded border border-border bg-canvas px-2.5 py-1 text-xs text-text-muted hover:text-text-primary disabled:opacity-50"
           >
-            <RefreshCw className={`h-3 w-3 ${isLoading ? 'animate-spin text-series-cpu' : ''}`} />
+            <RefreshCw className={`h-3 w-3 ${isLoading ? 'animate-spin text-accent-emerald' : ''}`} />
             <span>Poll Tier 1</span>
           </button>
         </div>
@@ -153,23 +154,23 @@ export const EgressProofPanel: React.FC<EgressProofPanelProps> = ({ collectorCli
 
       {/* Diagnostic Banner if Local Collector is Offline / CORS Blocked */}
       {error && (
-        <div className="rounded border border-health-poor/40 bg-health-poor/10 p-4 text-xs">
+        <div className="rounded border border-accent-crimson/40 bg-accent-crimson/10 p-4 text-xs">
           <div className="flex items-start gap-2.5">
-            <AlertCircle className="h-4 w-4 text-health-poor flex-shrink-0 mt-0.5" />
+            <AlertCircle className="h-4 w-4 text-accent-crimson flex-shrink-0 mt-0.5" />
             <div className="space-y-1">
-              <div className="font-bold text-health-poor">
-                Tier 1 Local Collector Unreachable or Blocked
+              <div className="font-bold text-accent-crimson">
+                Tier 1 Local Collector Unreachable or Stopped
               </div>
               <p className="text-text-muted">
-                Unable to establish connection to: <code className="font-mono text-text-primary">{collectorClient.getBaseUrl()}</code>
+                Unable to query local endpoint: <code className="font-mono text-text-primary">{collectorClient.getBaseUrl()}</code>
               </p>
-              <div className="mt-2 rounded border border-border bg-canvas p-2 font-mono text-[11px] text-text-dim">
-                <span className="text-series-cpu"># To launch the Tier 1 Local Collector:</span>
+              <div className="mt-2 rounded border border-border bg-canvas p-2.5 font-mono text-[11px] text-text-dim">
+                <span className="text-accent-emerald"># Start the Tier 1 Local Collector process:</span>
                 <br />
                 uv run --locked --extra collector python -m collector
               </div>
               <p className="text-[11px] text-text-dim italic mt-1">
-                Note: In strict compliance with privacy contracts, SaaS never reconstructs or fakes local egress proofs when the local collector is unreachable.
+                Privacy Enforcement Rule: No synthetic SaaS mock data is ever substituted when the local collector is unreachable.
               </p>
             </div>
           </div>
@@ -179,31 +180,31 @@ export const EgressProofPanel: React.FC<EgressProofPanelProps> = ({ collectorCli
       {/* Privacy Verification Badges Strip */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="flex items-center gap-2.5 rounded border border-border bg-surface p-2.5">
-          <CheckCircle className="h-4 w-4 text-health-excellent flex-shrink-0" />
+          <CheckCircle className="h-4 w-4 text-accent-emerald flex-shrink-0" />
           <div>
-            <div className="text-xs font-semibold text-text-primary">Allow-Listed Only</div>
+            <div className="text-xs font-semibold text-text-primary">Allow-Listed Schema</div>
             <div className="text-[10px] text-text-muted">telemetry.schema.json v1.0.0</div>
           </div>
         </div>
 
         <div className="flex items-center gap-2.5 rounded border border-border bg-surface p-2.5">
-          <CheckCircle className="h-4 w-4 text-health-excellent flex-shrink-0" />
+          <CheckCircle className="h-4 w-4 text-accent-emerald flex-shrink-0" />
           <div>
             <div className="text-xs font-semibold text-text-primary">Zero Raw Logs</div>
-            <div className="text-[10px] text-text-muted">Stack traces & logs excluded</div>
+            <div className="text-[10px] text-text-muted">Raw logs & traces stripped</div>
           </div>
         </div>
 
         <div className="flex items-center gap-2.5 rounded border border-border bg-surface p-2.5">
-          <CheckCircle className="h-4 w-4 text-health-excellent flex-shrink-0" />
+          <CheckCircle className="h-4 w-4 text-accent-emerald flex-shrink-0" />
           <div>
             <div className="text-xs font-semibold text-text-primary">Local Secret Redaction</div>
-            <div className="text-[10px] text-text-muted">Scrubbed before WAL queue</div>
+            <div className="text-[10px] text-text-muted">Passwords & keys scrubbed</div>
           </div>
         </div>
 
         <div className="flex items-center gap-2.5 rounded border border-border bg-surface p-2.5">
-          <CheckCircle className="h-4 w-4 text-health-excellent flex-shrink-0" />
+          <CheckCircle className="h-4 w-4 text-accent-emerald flex-shrink-0" />
           <div>
             <div className="text-xs font-semibold text-text-primary">HMAC Pseudonymization</div>
             <div className="text-[10px] text-text-muted">Service IDs keyed via SHA-256</div>
@@ -211,125 +212,28 @@ export const EgressProofPanel: React.FC<EgressProofPanelProps> = ({ collectorCli
         </div>
       </div>
 
-      {/* Main Egress Proof & Queue Status Section */}
+      {/* Side-by-Side Privacy Guarantee Section */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* Left: Live Egress JSON Inspection (7 cols) */}
-        <div className="lg:col-span-7 rounded border border-border bg-surface p-4">
-          <div className="flex items-center justify-between border-b border-border pb-2.5 mb-3">
-            <div className="flex items-center gap-2">
-              <FileCode className="h-4 w-4 text-series-cpu" />
-              <span className="text-xs font-bold uppercase tracking-wider text-text-primary">
-                Live Outbound Record Payload
-              </span>
-            </div>
-
-            <div className="flex items-center gap-2">
-              {preview?.payload_json && (
-                <button
-                  onClick={() => copyToClipboard(preview.payload_json || '')}
-                  className="flex items-center gap-1 rounded border border-border bg-canvas px-2 py-0.5 text-[11px] font-mono text-text-muted hover:text-text-primary"
-                >
-                  <Copy className="h-3 w-3" />
-                  {copied ? 'Copied' : 'Copy JSON'}
-                </button>
-              )}
-
-              {/* Enqueue sample test button */}
-              <button
-                onClick={handleEnqueueTestEvent}
-                disabled={isEnqueuing || !!error}
-                className="flex items-center gap-1 rounded bg-series-cpu/10 border border-series-cpu/30 px-2.5 py-0.5 text-[11px] font-semibold text-series-cpu hover:bg-series-cpu/20 disabled:opacity-40"
-              >
-                <Send className="h-3 w-3" />
-                {isEnqueuing ? 'Enqueueing...' : 'Test Enqueue Event'}
-              </button>
-            </div>
-          </div>
-
-          {/* Payload Content Area */}
-          {preview?.available && preview.payload ? (
-            <div className="space-y-3">
-              {/* Egress Metadata Header */}
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-border bg-canvas p-2.5 text-xs font-mono">
-                <div>
-                  <span className="text-text-muted">Payload ID: </span>
-                  <span className="text-text-primary font-bold">{preview.payload_id}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="rounded bg-series-cpu/10 border border-series-cpu/30 px-1.5 py-0.5 text-[10px] text-series-cpu uppercase">
-                    Status: {preview.transmission_status}
-                  </span>
-                  <span
-                    className={`rounded px-1.5 py-0.5 text-[10px] uppercase font-bold border ${
-                      preview.egress_review_status === 'approved'
-                        ? 'border-health-excellent/40 bg-health-excellent/10 text-health-excellent'
-                        : 'border-health-fair/40 bg-health-fair/10 text-health-fair'
-                    }`}
-                  >
-                    {preview.egress_review_status === 'approved' ? 'Approved' : 'Awaiting Review'}
-                  </span>
-                </div>
-              </div>
-
-              {/* Exact JSON View */}
-              <pre className="rounded border border-border bg-canvas p-3 font-mono text-xs text-text-primary overflow-x-auto max-h-80 leading-relaxed">
-                {JSON.stringify(preview.payload, null, 2)}
-              </pre>
-
-              {/* Human Approval Gate Action */}
-              {preview.egress_review_status === 'awaiting_review' && preview.payload_id && (
-                <div className="rounded border border-health-fair/40 bg-health-fair/10 p-3 flex items-center justify-between gap-3">
-                  <div className="text-xs text-text-primary">
-                    <span className="font-bold text-health-fair">Explicit Egress Gate: </span>
-                    This payload is buffered locally. Transmit only after review.
-                  </div>
-                  <button
-                    onClick={() => handleApprove(preview.payload_id!)}
-                    disabled={isApproving}
-                    className="flex items-center gap-1.5 rounded bg-health-excellent px-3 py-1.5 text-xs font-bold text-canvas hover:bg-health-excellent/90 disabled:opacity-50 whitespace-nowrap"
-                  >
-                    <ShieldCheck className="h-3.5 w-3.5" />
-                    {isApproving ? 'Approving...' : 'Approve & Transmit Outbound'}
-                  </button>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-12 text-center rounded border border-border/60 bg-canvas/40">
-              <HardDrive className="h-8 w-8 text-text-dim mb-2" />
-              <div className="text-xs font-semibold text-text-muted">
-                {error ? 'Collector Offline' : 'No Pending Egress Payload in Local WAL Queue'}
-              </div>
-              <p className="text-[11px] text-text-dim mt-1 max-w-xs">
-                {error
-                  ? 'Start the local collector to inspect outbound allow-listed metadata.'
-                  : 'Click "Test Enqueue Event" above to feed a development event and view real-time scrubbing.'}
-              </p>
-            </div>
-          )}
-        </div>
-
-        {/* Right: Redaction & Queue Proof Metadata (5 cols) */}
+        {/* Left Column: Local Redaction Proof & Queue State (5 cols) */}
         <div className="lg:col-span-5 space-y-4">
-          {/* Exclusion & Scrubbing Proof Box */}
           <div className="rounded border border-border bg-surface p-4">
             <div className="flex items-center gap-2 border-b border-border pb-2 mb-3">
-              <ShieldCheck className="h-4 w-4 text-health-excellent" />
+              <ShieldCheck className="h-4 w-4 text-accent-emerald" />
               <span className="text-xs font-bold uppercase tracking-wider text-text-primary">
-                Local Redaction & Exclusion Proof
+                Local Scrubbing Proof
               </span>
             </div>
 
             <div className="space-y-2 text-xs">
               <div className="flex items-center justify-between py-1 border-b border-border/40 font-mono">
-                <span className="text-text-muted">Validation Status</span>
-                <span className="text-health-excellent font-bold">
+                <span className="text-text-muted">Schema Validation</span>
+                <span className="text-accent-emerald font-bold">
                   {preview?.validation_status || 'valid'}
                 </span>
               </div>
 
               <div className="flex items-center justify-between py-1 border-b border-border/40 font-mono">
-                <span className="text-text-muted">Excluded Fields</span>
+                <span className="text-text-muted">Excluded Field Count</span>
                 <span className="text-text-primary font-bold">
                   {preview?.excluded_field_count ?? 0} fields
                 </span>
@@ -344,7 +248,7 @@ export const EgressProofPanel: React.FC<EgressProofPanelProps> = ({ collectorCli
                     preview.excluded_field_categories.map((cat, i) => (
                       <span
                         key={i}
-                        className="rounded border border-border bg-canvas px-1.5 py-0.5 text-[10px] font-mono text-health-fair"
+                        className="rounded border border-border bg-canvas px-1.5 py-0.5 text-[10px] font-mono text-accent-amber"
                       >
                         {cat}
                       </span>
@@ -357,32 +261,32 @@ export const EgressProofPanel: React.FC<EgressProofPanelProps> = ({ collectorCli
 
               <div className="py-1">
                 <span className="text-text-muted block text-[11px] mb-1 font-mono">
-                  Scrubbed / Redacted:
+                  Locally Scrubbed Keys:
                 </span>
                 <div className="flex flex-wrap gap-1">
                   {preview?.redacted_fields && preview.redacted_fields.length > 0 ? (
                     preview.redacted_fields.map((f, i) => (
                       <span
                         key={i}
-                        className="rounded border border-border bg-canvas px-1.5 py-0.5 text-[10px] font-mono text-health-poor"
+                        className="rounded border border-border bg-canvas px-1.5 py-0.5 text-[10px] font-mono text-accent-crimson"
                       >
                         {f}
                       </span>
                     ))
                   ) : (
-                    <span className="text-[11px] text-text-dim font-mono">Clean - no tokens detected</span>
+                    <span className="text-[11px] text-text-dim font-mono">Clean - no credentials in queue</span>
                   )}
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Local SQLite Queue Buffer Status */}
+          {/* SQLite Queue State */}
           <div className="rounded border border-border bg-surface p-4">
             <div className="flex items-center gap-2 border-b border-border pb-2 mb-3">
-              <HardDrive className="h-4 w-4 text-series-memory" />
+              <HardDrive className="h-4 w-4 text-accent-purple" />
               <span className="text-xs font-bold uppercase tracking-wider text-text-primary">
-                Local Queue Buffer (SQLite WAL)
+                Local SQLite WAL Queue
               </span>
             </div>
 
@@ -396,21 +300,21 @@ export const EgressProofPanel: React.FC<EgressProofPanelProps> = ({ collectorCli
 
               <div className="rounded border border-border bg-canvas p-2 text-center">
                 <div className="text-[10px] text-text-muted">Pending Delivery</div>
-                <div className="text-lg font-bold text-series-latency">
+                <div className="text-lg font-bold text-accent-amber">
                   {queue?.pending_delivery ?? '--'}
                 </div>
               </div>
 
               <div className="rounded border border-border bg-canvas p-2 text-center">
                 <div className="text-[10px] text-text-muted">In Flight</div>
-                <div className="text-lg font-bold text-series-cpu">
+                <div className="text-lg font-bold text-accent-cyan">
                   {queue?.in_flight ?? '--'}
                 </div>
               </div>
 
               <div className="rounded border border-border bg-canvas p-2 text-center">
                 <div className="text-[10px] text-text-muted">Acknowledged</div>
-                <div className="text-lg font-bold text-health-excellent">
+                <div className="text-lg font-bold text-accent-emerald">
                   {queue?.acknowledged ?? '--'}
                 </div>
               </div>
@@ -424,7 +328,7 @@ export const EgressProofPanel: React.FC<EgressProofPanelProps> = ({ collectorCli
               </div>
               <div className="flex justify-between">
                 <span>Operational Status:</span>
-                <span className="text-series-cpu font-bold uppercase">
+                <span className="text-accent-cyan font-bold uppercase">
                   {health?.operational_status || 'offline'}
                 </span>
               </div>
@@ -434,6 +338,97 @@ export const EgressProofPanel: React.FC<EgressProofPanelProps> = ({ collectorCli
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Right Column: Allow-Listed Metadata JSON Preview (7 cols) */}
+        <div className="lg:col-span-7 rounded border border-border bg-surface p-4">
+          <div className="flex items-center justify-between border-b border-border pb-2.5 mb-3">
+            <div className="flex items-center gap-2">
+              <FileCode className="h-4 w-4 text-accent-emerald" />
+              <span className="text-xs font-bold uppercase tracking-wider text-text-primary">
+                Allow-Listed Outbound Metadata JSON
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {preview?.payload_json && (
+                <button
+                  onClick={() => copyToClipboard(preview.payload_json || '')}
+                  className="flex items-center gap-1 rounded border border-border bg-canvas px-2 py-0.5 text-[11px] font-mono text-text-muted hover:text-text-primary"
+                >
+                  <Copy className="h-3 w-3" />
+                  {copied ? 'Copied' : 'Copy JSON'}
+                </button>
+              )}
+
+              <button
+                onClick={handleEnqueueTestEvent}
+                disabled={isEnqueuing || !!error}
+                className="flex items-center gap-1 rounded bg-accent-emerald/10 border border-accent-emerald/30 px-2.5 py-0.5 text-[11px] font-semibold text-accent-emerald hover:bg-accent-emerald/20 disabled:opacity-40"
+              >
+                <Send className="h-3 w-3" />
+                {isEnqueuing ? 'Enqueueing...' : 'Test Enqueue Event'}
+              </button>
+            </div>
+          </div>
+
+          {preview?.available && preview.payload ? (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-border bg-canvas p-2 text-xs font-mono">
+                <div>
+                  <span className="text-text-muted">Payload ID: </span>
+                  <span className="text-text-primary font-bold">{preview.payload_id}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="rounded bg-accent-cyan/10 border border-accent-cyan/30 px-1.5 py-0.5 text-[10px] text-accent-cyan uppercase">
+                    {preview.transmission_status}
+                  </span>
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-[10px] uppercase font-bold border ${
+                      preview.egress_review_status === 'approved'
+                        ? 'border-accent-emerald/40 bg-accent-emerald/10 text-accent-emerald'
+                        : 'border-accent-amber/40 bg-accent-amber/10 text-accent-amber'
+                    }`}
+                  >
+                    {preview.egress_review_status === 'approved' ? 'Approved' : 'Awaiting Review'}
+                  </span>
+                </div>
+              </div>
+
+              <pre className="rounded border border-border bg-canvas p-3 font-mono text-xs text-text-primary overflow-x-auto max-h-80 leading-relaxed">
+                {JSON.stringify(preview.payload, null, 2)}
+              </pre>
+
+              {preview.egress_review_status === 'awaiting_review' && preview.payload_id && (
+                <div className="rounded border border-accent-amber/40 bg-accent-amber/10 p-3 flex items-center justify-between gap-3">
+                  <div className="text-xs text-text-primary">
+                    <span className="font-bold text-accent-amber">Pre-Transmission Approval: </span>
+                    Inspect allow-listed fields before confirming delivery.
+                  </div>
+                  <button
+                    onClick={() => handleApprove(preview.payload_id!)}
+                    disabled={isApproving}
+                    className="flex items-center gap-1.5 rounded bg-accent-emerald px-3 py-1.5 text-xs font-bold text-canvas hover:bg-accent-emerald/90 disabled:opacity-50 whitespace-nowrap"
+                  >
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    {isApproving ? 'Approving...' : 'Approve & Transmit Outbound'}
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-12 text-center rounded border border-border/60 bg-canvas/40">
+              <HardDrive className="h-8 w-8 text-text-dim mb-2" />
+              <div className="text-xs font-semibold text-text-muted">
+                {error ? 'Collector Offline' : 'No Pending Egress Payload in Local Queue'}
+              </div>
+              <p className="text-[11px] text-text-dim mt-1 max-w-xs">
+                {error
+                  ? 'Start the local collector to inspect outbound allow-listed metadata.'
+                  : 'Click "Test Enqueue Event" above to feed a development event and view real-time scrubbing.'}
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>
