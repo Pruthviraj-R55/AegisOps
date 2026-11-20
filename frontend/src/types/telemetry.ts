@@ -1,13 +1,17 @@
+/**
+ * Telemetry types for charts, event logs, and UI presentation
+ */
+
 export interface TelemetryDataPoint {
-  timestamp: string; // ISO event_time
+  timestamp: string; // ISO event_time (RFC 3339 UTC)
   displayTime: string; // HH:mm:ss UTC
   cpu: number;
   memory: number;
   disk: number;
   latency: number;
   packetLoss: number;
+  bandwidth?: number;
   failedLogins?: number;
-  isBaseline?: boolean;
 }
 
 export interface SanitizedEventLog {
@@ -22,3 +26,14 @@ export interface SanitizedEventLog {
   status: 'normal' | 'anomalous' | 'stale';
   summary: string;
 }
+
+export type ActiveNavView =
+  | 'overview'
+  | 'infrastructure'
+  | 'network'
+  | 'security'
+  | 'incidents'
+  | 'anomalies'
+  | 'collectors'
+  | 'egress'
+  | 'settings';

@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 html {
@@ -12,10 +12,12 @@ html {
 
 body {
   margin: 0;
-  background-color: #05070A;
-  color: #E6EDF3;
+  background-color: #F4F6F8;
+  color: #17212B;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* Enforce tabular monospace for all numbers, metrics, IDs, and timestamps */
@@ -29,34 +31,21 @@ body {
   letter-spacing: -0.02em;
 }
 
-/* Netdata / Grafana Glassmorphic Dark Bar */
-.glass-header {
-  background: rgba(12, 16, 23, 0.88);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-bottom: 1px solid #1B2230;
-}
-
-/* Section scroll-reveal smooth transition */
-.reveal-section {
-  transition: opacity 0.4s ease-out, transform 0.4s ease-out;
-}
-
-/* Custom utilitarian Netdata scrollbar */
+/* Restrained light scrollbars */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #05070A;
+  background: #F4F6F8;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1B2230;
-  border-radius: 2px;
+  background: #CBD5E1;
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #2A364E;
+  background: #94A3B8;
 }

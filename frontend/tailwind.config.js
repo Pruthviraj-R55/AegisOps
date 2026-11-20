@@ -7,48 +7,49 @@ export default {
   theme: {
     extend: {
       colors: {
-        canvas: "#05070A",
+        app: "#F4F6F8",
         surface: {
-          DEFAULT: "#0C1017",
-          elevated: "#121722",
-          hover: "#18202F",
+          DEFAULT: "#FFFFFF",
+          secondary: "#F8FAFC",
+          hover: "#F1F5F9",
         },
         border: {
-          DEFAULT: "#1B2230",
-          subtle: "#151B27",
-          focus: "#2A364E",
+          DEFAULT: "#E3E8ED",
+          subtle: "#EDF2F7",
+          focus: "#CBD5E1",
         },
         text: {
-          primary: "#E6EDF3",
-          muted: "#8B949E",
-          dim: "#4E5664",
+          primary: "#17212B",
+          secondary: "#667085",
+          muted: "#98A2B3",
         },
         accent: {
-          emerald: "#00D26A",
-          cyan: "#38BDF8",
-          amber: "#F59E0B",
-          crimson: "#F2495C",
-          purple: "#A78BFA",
+          DEFAULT: "#147D70",
+          light: "#E8F3F1",
+          hover: "#0F6258",
         },
-        health: {
-          excellent: "#00D26A",
-          good: "#38BDF8",
-          fair: "#F59E0B",
-          poor: "#F2495C",
-          offline: "#F2495C",
-          stale: "#F2495C",
+        semantic: {
+          excellent: "#23865B",
+          excellentLight: "#EAF5F0",
+          good: "#3267C8",
+          goodLight: "#EFF4FC",
+          fair: "#B7791F",
+          fairLight: "#FEF7EC",
+          poor: "#C2414B",
+          poorLight: "#FDF2F2",
         },
-        series: {
-          cpu: "#38BDF8",
-          memory: "#A78BFA",
-          latency: "#F59E0B",
-          packetLoss: "#F2495C",
-          disk: "#00D26A",
-          security: "#E6EDF3",
+        chart: {
+          cpu: "#147D70",
+          memory: "#3267C8",
+          disk: "#8B6BA8",
+          latency: "#147D70",
+          packetLoss: "#C2414B",
+          security: "#B7791F",
         },
       },
       fontFamily: {
         sans: [
+          "Inter",
           "-apple-system",
           "BlinkMacSystemFont",
           "Segoe UI",
@@ -66,19 +67,9 @@ export default {
           "monospace",
         ],
       },
-      keyframes: {
-        fadeInUp: {
-          '0%': { opacity: '0', transform: 'translateY(8px)' },
-          '100%': { opacity: '1', transform: 'translateY(0)' },
-        },
-        pulseGlow: {
-          '0%, 100%': { opacity: '1', filter: 'drop-shadow(0 0 4px #00D26A)' },
-          '50%': { opacity: '0.6', filter: 'drop-shadow(0 0 1px #00D26A)' },
-        },
-      },
-      animation: {
-        'fade-in-up': 'fadeInUp 0.35s ease-out forwards',
-        'pulse-glow': 'pulseGlow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+      boxShadow: {
+        card: "0 1px 2px 0 rgba(16, 24, 40, 0.05)",
+        popover: "0 4px 6px -2px rgba(16, 24, 40, 0.05), 0 12px 16px -4px rgba(16, 24, 40, 0.08)",
       },
     },
   },
