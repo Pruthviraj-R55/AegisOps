@@ -22,6 +22,3 @@ class CollectorSettings(BaseSettings):
     saas_ingest_url: str | None = None
     collector_bearer_token: SecretStr | None = None
     aegisops_env: str = "development"
-
-
-settings = CollectorSettings()

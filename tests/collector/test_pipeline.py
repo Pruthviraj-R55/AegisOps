@@ -61,6 +61,51 @@ def test_emitted_keys_match_schema_allow_list(event, normalizer):
     assert payload["collector_id"] == "collector-test"
 
 
+def test_metrics_only_normalizes_as_v1_1_without_inventing_security(event, normalizer):
+    event.pop("security")
+    payload, _ = normalizer.build(event)
+
+    assert payload["schema_version"] == "1.1.0"
+    assert "security" not in payload
+    schema = json.loads((__import__("pathlib").Path(__file__).parents[2] / "contracts" / "telemetry.schema.json").read_text())
+    Draft202012Validator(schema, format_checker=FormatChecker()).validate(payload)
+
+
+@pytest.mark.parametrize("version", ["1.0.0", "1.1.0"])
+def test_explicit_contract_versions_validate_with_security(event, normalizer, version):
+    event["schema_version"] = version
+    payload, _ = normalizer.build(event)
+    assert payload["schema_version"] == version
+    assert payload["security"]["failed_login_count"] == 0
+
+
+def test_v1_0_requires_security_and_unknown_version_is_rejected(event, normalizer):
+    event["schema_version"] = "1.0.0"
+    event.pop("security")
+    with pytest.raises(InvalidTelemetry, match="requires security"):
+        normalizer.build(event)
+
+    event["schema_version"] = "9.9.9"
+    with pytest.raises(InvalidTelemetry, match="unsupported"):
+        normalizer.build(event)
+
+    event["schema_version"] = ["1.1.0"]
+    with pytest.raises(InvalidTelemetry, match="unsupported"):
+        normalizer.build(event)
+
+    event["schema_version"] = None
+    with pytest.raises(InvalidTelemetry, match="unsupported"):
+        normalizer.build(event)
+
+
+@pytest.mark.parametrize("security", [None, {}, {"failed_login_count": -1}, {"extra_count": 1}])
+def test_malformed_security_is_rejected_for_v1_1(event, normalizer, security):
+    event["schema_version"] = "1.1.0"
+    event["security"] = security
+    with pytest.raises(InvalidTelemetry):
+        normalizer.build(event)
+
+
 def test_service_pseudonym_is_stable_and_does_not_expose_source(event, normalizer):
     first, _ = normalizer.build(event)
     second, _ = normalizer.build(event)

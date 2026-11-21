@@ -31,7 +31,7 @@ _METRIC_FIELDS = {
 }
 _SECURITY_FIELDS = {"failed_login_count", "suspicious_activity_count"}
 _ROOT_FIELDS = {
-    "service", "environment", "region", "event_time", "metrics", "security", "health", "event_id",
+    "schema_version", "service", "environment", "region", "event_time", "metrics", "security", "health", "event_id",
     "tenant_id", "collector_id", "payload_id", "source_id", "host_id", "raw", "logs", "log", "message",
 }
 _SECRET_KEY_NAME = re.compile(r"(?i)(?:pass|secret|api[_-]?key|token|auth|credential|private[_-]?key)")
@@ -120,26 +120,39 @@ class TelemetryNormalizer:
             region = _scrub_allowed_string(region_value, "region", redacted_fields)
 
         metric_source = raw.get("metrics")
+        security_present = "security" in raw
         security_source = raw.get("security")
-        if not isinstance(metric_source, dict) or not isinstance(security_source, dict):
-            raise InvalidTelemetry("metrics and security objects are required by the shared schema")
+        if not isinstance(metric_source, dict):
+            raise InvalidTelemetry("metrics object is required by the shared schema")
+        if security_present and not isinstance(security_source, dict):
+            raise InvalidTelemetry("security must be an object when supplied")
+
+        schema_version = raw.get("schema_version") if "schema_version" in raw else (
+            "1.0.0" if security_present else "1.1.0"
+        )
+        if not isinstance(schema_version, str) or schema_version not in {"1.0.0", "1.1.0"}:
+            raise InvalidTelemetry("schema_version is unsupported")
+        if schema_version == "1.0.0" and not security_present:
+            raise InvalidTelemetry("schema version 1.0.0 requires security telemetry")
 
         metrics: dict[str, Any] = {}
         for key, value in metric_source.items():
             if key in _METRIC_FIELDS and value is not None:
                 metrics[key] = value
         unknown_nested = sum(1 for key in metric_source if key not in _METRIC_FIELDS)
-        for key, value in security_source.items():
-            if key in _SECURITY_FIELDS and value is not None:
-                pass
-            elif key not in _SECURITY_FIELDS:
-                unknown_nested += 1
-        security = {key: security_source[key] for key in _SECURITY_FIELDS if key in security_source and security_source[key] is not None}
+        security = None
+        if security_present:
+            for key, value in security_source.items():
+                if key in _SECURITY_FIELDS and value is not None:
+                    pass
+                elif key not in _SECURITY_FIELDS:
+                    unknown_nested += 1
+            security = {key: security_source[key] for key in _SECURITY_FIELDS if key in security_source and security_source[key] is not None}
         if unknown_nested and "unsupported_fields" not in categories:
             categories.append("unsupported_fields")
 
         trusted_event = {
-            "schema_version": "1.0.0",
+            "schema_version": schema_version,
             "payload_id": _raw_identity_id(raw, self.tenant_id, service_source, self.pseudonymization_key),
             "tenant_id": self.tenant_id,
             "collector_id": self.collector_id,
@@ -147,9 +160,10 @@ class TelemetryNormalizer:
             "service": pseudonym,
             "environment": environment,
             "metrics": metrics,
-            "security": security,
             "health": raw.get("health"),
         }
+        if security is not None:
+            trusted_event["security"] = security
         if region is not None:
             trusted_event["region"] = region
 

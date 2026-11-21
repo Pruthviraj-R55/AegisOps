@@ -177,7 +177,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               Canonical JSON Schema:
             </span>
             <p className="text-text-secondary text-[11px] leading-relaxed">
-              Conforms to <code className="font-mono text-accent">contracts/telemetry.schema.json</code> v1.0.0.
+              Conforms to <code className="font-mono text-accent">contracts/telemetry.schema.json</code> v1.0.0 and v1.1.0.
               Enforces <code className="font-mono">extra="forbid"</code> on all ingestion endpoints.
             </p>
           </div>

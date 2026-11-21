@@ -64,6 +64,12 @@ export class CollectorClient {
     });
   }
 
+  async rejectEgress(payloadId: string): Promise<void> {
+    await this.request<void>(`/api/v1/collector/queue/${encodeURIComponent(payloadId)}/reject`, {
+      method: 'POST',
+    });
+  }
+
   async retryFailedPayload(payloadId: string): Promise<{ payload_id: string; status: string }> {
     return this.request<{ payload_id: string; status: string }>(
       `/api/v1/collector/queue/${encodeURIComponent(payloadId)}/retry`,

@@ -20,9 +20,18 @@ export interface CollectorQueueItem {
   payload_id: string;
   state: 'pending' | 'in_flight' | 'acknowledged' | 'failed';
   egress_approved: boolean;
+  egress_review_status: 'approved' | 'awaiting_review' | 'rejected' | 'integrity_error';
   attempts: number;
   created_at: string;
+  updated_at: string;
   next_attempt_at: number;
+  last_error_code: string | null;
+  schema_version: string | null;
+  event_time: string | null;
+  source_category: string;
+  metrics: Record<string, number>;
+  security_status: 'available' | 'partial' | 'unavailable' | 'unknown';
+  payload_integrity_valid: boolean;
 }
 
 export interface CollectorQueueStatus {
@@ -40,7 +49,13 @@ export interface EgressPreview {
   payload_id?: string;
   validation_status?: string;
   transmission_status: string;
-  egress_review_status?: 'approved' | 'awaiting_review';
+  egress_review_status?: 'approved' | 'awaiting_review' | 'rejected' | 'integrity_error';
+  payload_integrity_valid?: boolean;
+  schema_version?: string | null;
+  capture_timestamp?: string | null;
+  source_category?: string;
+  metrics?: Record<string, number>;
+  security_status?: 'available' | 'partial' | 'unavailable' | 'unknown';
   payload_json?: string | null;
   payload?: {
     schema_version: string;
@@ -52,9 +67,9 @@ export interface EgressPreview {
     environment: string;
     region?: string | null;
     metrics: Record<string, number>;
-    security: Record<string, number>;
+    security?: Record<string, number> | null;
     health: string;
-  };
+  } | null;
   excluded_field_count?: number;
   excluded_field_categories?: string[];
   excluded_fields?: string[];

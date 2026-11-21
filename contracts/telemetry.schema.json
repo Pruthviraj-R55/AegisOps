@@ -14,11 +14,10 @@
     "service",
     "environment",
     "metrics",
-    "security",
     "health"
   ],
   "properties": {
-    "schema_version": { "const": "1.0.0" },
+    "schema_version": { "enum": ["1.0.0", "1.1.0"] },
     "payload_id": { "type": "string", "format": "uuid" },
     "tenant_id": { "type": "string", "minLength": 1, "maxLength": 128 },
     "collector_id": { "type": "string", "minLength": 1, "maxLength": 128 },
@@ -50,6 +49,15 @@
     },
     "health": { "enum": ["excellent", "good", "fair", "poor"] }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "schema_version": { "const": "1.0.0" } },
+        "required": ["schema_version"]
+      },
+      "then": { "required": ["security"] }
+    }
+  ],
   "$defs": {
     "percentage": { "type": "number", "minimum": 0, "maximum": 100 }
   }

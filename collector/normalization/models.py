@@ -70,7 +70,7 @@ class SecurityCounts(BaseModel):
 class OutboundTelemetry(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    schema_version: Literal["1.0.0"]
+    schema_version: Literal["1.0.0", "1.1.0"]
     payload_id: UUID
     tenant_id: str = Field(min_length=1, max_length=128)
     collector_id: str = Field(min_length=1, max_length=128)
@@ -79,8 +79,16 @@ class OutboundTelemetry(BaseModel):
     environment: str = Field(min_length=1, max_length=64)
     region: str | None = Field(default=None, max_length=128)
     metrics: Metrics
-    security: SecurityCounts
+    security: SecurityCounts | None = None
     health: Literal["excellent", "good", "fair", "poor"]
+
+    @model_validator(mode="after")
+    def validate_security_version(self) -> "OutboundTelemetry":
+        if self.schema_version == "1.0.0" and self.security is None:
+            raise ValueError("schema version 1.0.0 requires security telemetry")
+        if "security" in self.model_fields_set and self.security is None:
+            raise ValueError("security must be an object when supplied")
+        return self
 
     @field_validator("event_time", mode="before")
     @classmethod

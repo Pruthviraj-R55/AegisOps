@@ -76,12 +76,16 @@ class CollectorService:
                 except TimeoutError:
                     pass
 
-    async def ingest(self, raw_event: object) -> dict[str, Any]:
+    async def ingest(self, raw_event: object, *, source_category: str = "local_api") -> dict[str, Any]:
         started = time.perf_counter()
         configured_key = self.settings.collector_pseudonymization_key
         if configured_key is None or not configured_key.get_secret_value():
             raise RuntimeError("collector pseudonymization key is not configured")
         payload, proof = await asyncio.to_thread(self.normalizer.build, raw_event)
+        allowed_sources = {"windows_live_metrics", "file", "development_only", "local_api", "adapter"}
+        proof["source_category"] = (
+            source_category if isinstance(source_category, str) and source_category in allowed_sources else "adapter"
+        )
         payload_json = serialize_payload(payload)
         created = await self.queue.enqueue(payload["payload_id"], payload_json, proof)
         self.last_queue_duration_ms = round((time.perf_counter() - started) * 1000, 3)
@@ -100,7 +104,8 @@ class CollectorService:
         queued_count = 0
         async for raw_event in adapter.events():
             try:
-                await self.ingest(raw_event)
+                source_category = getattr(adapter, "source_kind", "adapter")
+                await self.ingest(raw_event, source_category=source_category)
             except InvalidTelemetry as exc:
                 source_name = getattr(adapter, "source_name", "adapter")
                 record_number = getattr(adapter, "current_record_number", queued_count + 1)

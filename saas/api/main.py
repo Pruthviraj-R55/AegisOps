@@ -123,7 +123,7 @@ def create_app() -> FastAPI:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             code="invalid_payload",
             title="Validation failed",
-            detail="The metadata record does not match schema version 1.0.0.",
+            detail="The metadata record does not match supported schema version 1.0.0 or 1.1.0.",
             request_id=req_id,
         )
 

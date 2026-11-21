@@ -29,6 +29,18 @@ uv run --locked --extra collector python -m collector
 
 The process binds to `127.0.0.1:${COLLECTOR_API_PORT}` (default `8100`). Keep it loopback-only; the local health, queue and egress endpoints do not implement user authentication. CORS is limited to the two local Vite origins by default and can be set with `COLLECTOR_CORS_ORIGINS` (comma-separated exact origins). The development telemetry input route is disabled unless `AEGISOPS_ENV` is `development` or `test`.
 
+### One-shot Windows live metrics sample
+
+The `WindowsMetricsAdapter` captures CPU, memory, the collector's current-drive disk utilization, and aggregate network throughput from local OS counters. Network sent/received byte deltas are sampled locally and mapped to the contract's `bandwidth_mbps`; cumulative counters are not added to the contract or queued. It does not read Windows Security Event Logs, raw logs, usernames, paths, process command lines, or credentials. Unavailable metrics are omitted; the event uses schema 1.1.0 and has no `security` object. `health` is `good` only when all four metric categories were measured, otherwise `fair`; it describes sample coverage, not security posture.
+
+The capture command uses process environment variables only (it does not load `.env`), queues one normalized record in the existing SQLite WAL database, prints only safe metric metadata, and never starts delivery or approves egress. Configure `COLLECTOR_PSEUDONYMIZATION_KEY` in the current PowerShell process using your normal secret-management method, then run:
+
+```powershell
+uv run --locked --extra collector python -m collector.capture_windows --service "local-windows" --environment "development" --queue-path .\var\windows-capture.sqlite3
+```
+
+The service label is pseudonymized before it enters the queue. The resulting row remains `awaiting_review`; inspect it with the local egress preview before separately approving any future transmission. Sampling is bounded to 0.1–5 seconds, with a further timeout around OS collection. If no supported metric is available, no record is queued.
+
 ## Local collector endpoints
 
 | Method and path | Purpose |
@@ -36,11 +48,29 @@ The process binds to `127.0.0.1:${COLLECTOR_API_PORT}` (default `8100`). Keep it
 | `GET /api/v1/collector/health` | Collector ID, process heartbeat, queue depth, delivery state, and configured offline threshold. |
 | `GET /api/v1/collector/queue` | Counts and metadata-only queue items (ID, state, attempts, timestamps and safe error code); never includes payload bodies. |
 | `POST /api/v1/collector/queue/{payload_id}/retry` | Requeue a permanently failed, previously approved payload for another attempt. |
-| `GET /api/v1/collector/egress-preview` | Exact queued JSON string and parsed object for the next pending record, plus validation and value-free redaction/exclusion metadata. Optional `payload_id` selects one waiting item. |
-| `POST /api/v1/collector/egress-preview/{payload_id}/approve` | Approve the exact previewed record for automatic delivery. Until this call, the sender cannot claim or transmit it. |
+| `POST /api/v1/collector/queue/{payload_id}/reject` | Reject a pending payload permanently; it cannot be manually retried or delivered. |
+| `GET /api/v1/collector/egress-preview` | Exact queued JSON string and parsed object for the next pending record, plus schema/capture/source metadata, security availability, integrity, and value-free redaction/exclusion categories. Optional `payload_id` selects a specific record. |
+| `POST /api/v1/collector/egress-preview/{payload_id}/approve` | Approve the exact payload bytes for automatic delivery. Until approval, the sender cannot claim or transmit it. |
 | `POST /api/v1/collector/telemetry` | Development/test-only input adapter. Accepts the canonical internal event fixture shape and returns `source_kind: development_only`. Not an organizer integration. |
 
-These endpoints are local collector APIs and do not alter the shared SaaS API contract. The explicit approval gate ensures that a record cannot be transmitted before the UI has had an opportunity to inspect the exact queued JSON. The preview endpoint exposes approved metadata, so do not bind the server to a public interface.
+These endpoints are local collector APIs and do not alter the shared SaaS API contract. The API rejects non-loopback Host values and rejects unsafe browser requests whose Origin is not in `COLLECTOR_CORS_ORIGINS`; CORS headers alone are not used as CSRF protection. Requests from local command-line tools without an Origin remain usable. Keep the server bound to loopback because preview exposes approved telemetry metadata.
+
+Each queued payload has a SHA-256 digest recorded at enqueue and a second digest recorded at approval. The sender recomputes both before claiming a record; if the payload changes, it revokes approval and leaves the record local. Existing queue rows are migrated additively; rows approved before digest tracking require fresh review. Rejection uses the existing `failed` queue state with fixed code `egress_rejected`; the manual retry endpoint refuses that code. Transport failures retain approval and retry the same stored payload bytes and ID; only a valid SaaS acknowledgement marks delivery complete.
+
+To inspect and explicitly approve the next sample from PowerShell, while the collector is running with SaaS delivery **not configured**:
+
+```powershell
+$api = "http://127.0.0.1:8100"
+$preview = Invoke-RestMethod -Uri "$api/api/v1/collector/egress-preview" -Method Get
+$preview | Select-Object payload_id, schema_version, capture_timestamp, source_category, metrics, security_status, egress_review_status, payload_integrity_valid
+$preview.payload_json
+if (-not $preview.available -or $preview.validation_status -ne "valid" -or $preview.egress_review_status -ne "awaiting_review") { throw "No valid unapproved payload is ready for review." }
+$confirmation = Read-Host "Type the displayed payload ID to approve this exact payload"
+if ($confirmation -ne $preview.payload_id) { throw "Approval cancelled." }
+Invoke-WebRequest -Uri "$api/api/v1/collector/egress-preview/$($preview.payload_id)/approve" -Method Post
+```
+
+Approval makes the row eligible for automatic delivery. Do not run the approval command with a live SaaS URL/token configured until Stage C is authorized.
 
 ## Accepted development event shape
 
@@ -59,13 +89,13 @@ This is only an adapter-neutral local fixture shape, not the organizer schema:
 }
 ```
 
-The collector currently requires at least one supported metric and one security count because the shared schema requires both objects to be non-empty. Unknown fields/metrics/security keys are excluded. Raw `tenant_id`, `collector_id`, and `payload_id` values are never trusted. The `service` value is HMAC-pseudonymized into the schema's `service` field. A production adapter should map an organizer-provided stable event identifier to `event_id`; without one, the collector generates a new ID per input event and cannot deduplicate source replays.
+The collector requires at least one supported metric. When security counters are available, at least one supported counter must be provided. With no security field, the normalizer emits schema version 1.1.0 and omits security; it never substitutes zero. Supplied empty, null, malformed, or unsupported security fields are rejected. Schema version 1.0.0 continues to require security counters, while 1.1.0 allows omission. Unknown fields/metrics/security keys are excluded. Raw `tenant_id`, `collector_id`, and `payload_id` values are never trusted. The `service` value is HMAC-pseudonymized into the schema's `service` field. A production adapter should map an organizer-provided stable event identifier to `event_id`; without one, the collector generates a new ID per input event and cannot deduplicate source replays.
 
-This slice validates one normalized record at a time; it does not aggregate a stream window or infer health. The organizer adapter must map source events into this input shape and provide already-aggregated security counters (or a later coordinated collector implementation must add local aggregation).
+This slice validates one normalized record at a time; it does not aggregate a stream window or infer health. The organizer adapter must map source events into this input shape and provide already-aggregated security counters when available; otherwise omit security and never fabricate zero.
 
 ## Reliability and heartbeat semantics
 
-SQLite is set to WAL mode with `synchronous=FULL`. Queue writes contain only the validated serialized outbound payload and value-free proof metadata. New records await local egress approval; restart recovery returns in-flight records to pending while preserving approval state. Every retry reuses the same exact payload bytes and `payload_id`; an item becomes acknowledged only after a response matching the shared API's accepted acknowledgement shape. Same-ID/same-body local enqueue is idempotent; same-ID/different-body is rejected.
+SQLite is set to WAL mode with `synchronous=FULL`. Queue writes contain only the validated serialized outbound payload and value-free proof metadata. New records await local egress approval; restart recovery returns in-flight records to pending while preserving digest-bound approval state. Every retry reuses the same exact payload bytes and `payload_id`; an item becomes acknowledged only after a response matching the shared API's accepted acknowledgement shape. Same-ID/same-body local enqueue is idempotent; same-ID/different-body is rejected.
 
 Transient network failures, `408`, `429`, and `5xx` use bounded exponential backoff with jitter and honor numeric/date `Retry-After`. Other non-success `4xx` responses are retained as `failed` for operator review/manual retry through the queue service. Error bodies and raw telemetry are never logged.
 

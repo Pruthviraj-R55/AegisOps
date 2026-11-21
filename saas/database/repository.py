@@ -64,6 +64,13 @@ def _signal_evidence(signal: Any) -> dict[str, Any]:
     }
 
 
+def _security_response(record: TelemetryRecord) -> dict[str, Any] | None:
+    """Represent v1.1.0 absence as unavailable; leave historical v1.0.0 untouched."""
+    if record.schema_version == "1.1.0" and not record.security:
+        return None
+    return record.security
+
+
 def _find_correlated_active_incident(
     session: Session,
     *,
@@ -145,7 +152,7 @@ def _detect_and_persist_incident(
     ]
     current_dict = {
         "metrics": payload.metrics.model_dump(mode="json", exclude_none=True),
-        "security": payload.security.model_dump(mode="json", exclude_none=True),
+        "security": payload.security.model_dump(mode="json", exclude_none=True) if payload.security is not None else {},
         "event_time": event_time,
     }
     settings = get_settings()
@@ -283,7 +290,7 @@ def record_telemetry(
         environment=payload.environment,
         region=payload.region,
         metrics=payload.metrics.model_dump(mode="json", exclude_none=True),
-        security=payload.security.model_dump(mode="json", exclude_none=True),
+        security=payload.security.model_dump(mode="json", exclude_none=True) if payload.security is not None else {},
         health=payload.health.value,
         payload_hash=payload_hash,
     )
@@ -416,7 +423,7 @@ def get_tenant_telemetry_history(
             "environment": record.environment,
             "region": record.region,
             "metrics": record.metrics,
-            "security": record.security,
+            "security": _security_response(record),
             "health": record.health,
         }
         for record in page
@@ -465,7 +472,7 @@ def get_tenant_incident_evidence(
             "environment": record.environment,
             "region": record.region,
             "metrics": record.metrics,
-            "security": record.security,
+            "security": _security_response(record),
             "signals": evidence.signals,
         }
         for evidence, record in rows
@@ -525,6 +532,7 @@ def get_tenant_services(
                 "region": r.region,
                 "health": health_eval.health,
                 "health_score": health_eval.health_score,
+                "security_status": health_eval.security_status,
                 "last_event_time": format_rfc3339_z(r.event_time),
                 "stale": stale,
                 "metrics": r.metrics,

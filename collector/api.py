@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from contextlib import asynccontextmanager
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -38,6 +39,38 @@ def create_app(settings: CollectorSettings | None = None, service: CollectorServ
     )
     app.state.collector = collector
 
+    allowed_origin_keys = set()
+    for origin in allowed_origins:
+        parsed = urlsplit(origin)
+        if parsed.scheme and parsed.netloc and parsed.path in {"", "/"} and not parsed.query and not parsed.fragment:
+            allowed_origin_keys.add(f"{parsed.scheme.lower()}://{parsed.netloc.lower()}")
+
+    @app.middleware("http")
+    async def protect_loopback_boundary(request: Request, call_next):
+        # CORS controls browser reads; these checks protect local routes from
+        # DNS rebinding and cross-origin state-changing requests.
+        try:
+            request_host = request.url.hostname
+        except ValueError:
+            request_host = None
+        if request_host not in {"localhost", "127.0.0.1", "::1"}:
+            return JSONResponse({"detail": "invalid_host"}, status_code=403)
+        if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
+            origin = request.headers.get("origin")
+            if origin is not None:
+                try:
+                    parsed = urlsplit(origin)
+                    origin_key = (
+                        f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+                        if parsed.scheme and parsed.netloc and parsed.path in {"", "/"}
+                        and not parsed.query and not parsed.fragment else None
+                    )
+                except ValueError:
+                    origin_key = None
+                if origin_key not in allowed_origin_keys:
+                    return JSONResponse({"detail": "origin_not_allowed"}, status_code=403)
+        return await call_next(request)
+
     @app.get("/api/v1/collector/health")
     async def collector_health() -> dict[str, Any]:
         return await collector.health()
@@ -53,6 +86,13 @@ def create_app(settings: CollectorSettings | None = None, service: CollectorServ
             raise HTTPException(status_code=404, detail="failed_payload_not_found")
         return {"payload_id": payload_id, "status": "pending"}
 
+    @app.post("/api/v1/collector/queue/{payload_id}/reject", status_code=204)
+    async def reject_egress(payload_id: str) -> None:
+        rejected = await collector.queue.reject_egress(payload_id)
+        if not rejected:
+            raise HTTPException(status_code=404, detail="pending_payload_not_found")
+        return None
+
     @app.get("/api/v1/collector/egress-preview")
     async def egress_preview(payload_id: str | None = Query(default=None)) -> JSONResponse:
         item = await collector.queue.preview(payload_id)
@@ -61,16 +101,69 @@ def create_app(settings: CollectorSettings | None = None, service: CollectorServ
                 {"available": False, "transmission_status": "no_pending_payload", "payload_json": None},
                 status_code=200,
             )
+        integrity_valid = item.payload_integrity_valid
+        payload = json.loads(item.payload_json) if integrity_valid else None
+        proof = item.proof()
+        safe_sources = {"windows_live_metrics", "file", "development_only", "local_api", "adapter"}
+        raw_source = proof.get("source_category")
+        source_category = raw_source if isinstance(raw_source, str) and raw_source in safe_sources else "unknown"
+        security = payload.get("security") if isinstance(payload, dict) else None
+        security_keys = {"failed_login_count", "suspicious_activity_count"}
+        if not isinstance(security, dict) or not security:
+            security_status = "unavailable"
+        elif security_keys <= set(security):
+            security_status = "available"
+        else:
+            security_status = "partial"
+        review_status = (
+            "rejected" if item.last_error_code == "egress_rejected"
+            else "approved" if item.egress_approved
+            else "awaiting_review"
+        )
+        transmission_status = (
+            "rejected" if review_status == "rejected"
+            else "failed" if item.state == "failed"
+            else item.state
+        )
+        safe_categories = {
+            "unsupported_fields", "credential_fields", "untrusted_identity_overrides", "raw_or_source_fields"
+        }
+        safe_redacted_fields = {"service", "environment", "region"}
+        excluded_count = proof.get("excluded_field_count", 0)
+        if isinstance(excluded_count, bool) or not isinstance(excluded_count, int) or excluded_count < 0:
+            excluded_count = 0
         return JSONResponse(
             {
                 "available": True,
                 "payload_id": item.payload_id,
-                "validation_status": "valid",
-                "transmission_status": "in_flight" if item.state == "in_flight" else "pending",
-                "egress_review_status": "approved" if item.egress_approved else "awaiting_review",
-                "payload_json": item.payload_json,
-                "payload": json.loads(item.payload_json),
-                **item.proof(),
+                "validation_status": "valid" if integrity_valid else "integrity_error",
+                "payload_integrity_valid": integrity_valid,
+                "transmission_status": transmission_status,
+                "egress_review_status": review_status,
+                "payload_json": item.payload_json if integrity_valid else None,
+                "payload": payload,
+                "schema_version": payload.get("schema_version") if payload else None,
+                "capture_timestamp": payload.get("event_time") if payload else None,
+                "source_category": source_category,
+                "metrics": payload.get("metrics", {}) if payload else {},
+                "security_status": security_status if integrity_valid else "unknown",
+                "excluded_field_count": excluded_count,
+                "excluded_field_categories": [
+                    value for value in proof.get("excluded_field_categories", [])
+                    if isinstance(value, str) and value in safe_categories
+                ],
+                "excluded_fields": [
+                    value for value in proof.get("excluded_fields", [])
+                    if isinstance(value, str) and value in {
+                        "unsupported fields", "credential-like fields", "untrusted tenant_id",
+                        "untrusted collector_id", "untrusted payload_id",
+                        "raw log or source identifier fields", "event_id (used only to derive a stable payload ID)",
+                    }
+                ],
+                "redacted_fields": [
+                    value for value in proof.get("redacted_fields", [])
+                    if isinstance(value, str) and value in safe_redacted_fields
+                ],
             }
         )
 
@@ -102,7 +195,7 @@ def create_app(settings: CollectorSettings | None = None, service: CollectorServ
         except (json.JSONDecodeError, UnicodeDecodeError):
             raise HTTPException(status_code=400, detail="invalid_json") from None
         try:
-            result = await collector.ingest(event)
+            result = await collector.ingest(event, source_category="development_only")
         except RuntimeError:
             raise HTTPException(status_code=503, detail="collector_privacy_configuration_missing") from None
         except InvalidTelemetry:

@@ -18,7 +18,9 @@ Login uses generic invalid-credential responses and database-backed bounded atte
 
 ## `POST /api/v1/ingest`
 
-Submits one record conforming to `contracts/telemetry.schema.json`. Request body is the record itself; no raw event wrapper is allowed. The server assigns `ingested_at` in its response/storage and records the authenticated tenant.
+Submits one record conforming to `contracts/telemetry.schema.json` version 1.0.0 or 1.1.0. Request body is the record itself; no raw event wrapper is allowed. The server assigns `ingested_at` in its response/storage and records the authenticated tenant.
+
+Version 1.0.0 requires a non-empty `security` object. Version 1.1.0 permits the `security` property to be omitted when the collector cannot obtain those signals; if supplied, it must still be a non-empty object containing only valid supported counters. An omitted object means security telemetry is unavailable, never zero. Explicit `security: null`, empty objects, malformed counters, unknown fields, and unsupported `schema_version` values are rejected with `422 invalid_payload`.
 
 Success (`202 Accepted`, after durable commit):
 
@@ -43,11 +45,11 @@ All responses are tenant-scoped from auth context, with no caller-supplied tenan
 | Method and path | Purpose | Response item fields |
 | --- | --- | --- |
 | `GET /api/v1/dashboard/overview` | Fleet summary | `generated_at`, `overall_health`, `service_counts` keyed by health state, `active_incident_count`, `stale_service_count` |
-| `GET /api/v1/services` | Current service health | `service`, `environment`, `region`, `health`, `health_score` (0–100), `last_event_time`, `stale`, `metrics` |
-| `GET /api/v1/telemetry` | Persisted telemetry history ordered by event time | `payload_id`, `collector_id`, `schema_version`, `event_time`, `ingested_at`, `service`, `environment`, `region`, `metrics`, `security`, `health` |
+| `GET /api/v1/services` | Current service health | `service`, `environment`, `region`, `health`, `health_score` (0–100), `security_status` (`available`, `partial`, `unavailable`), `last_event_time`, `stale`, `metrics` |
+| `GET /api/v1/telemetry` | Persisted telemetry history ordered by event time | `payload_id`, `collector_id`, `schema_version`, `event_time`, `ingested_at`, `service`, `environment`, `region`, `metrics`, `security` (object or `null` when unavailable), `health` |
 | `GET /api/v1/security-events` | Telemetry history with non-zero schema-supported security counters | Same telemetry fields; only records with a non-zero supported security count |
 | `GET /api/v1/incidents` | Open/recent incidents | `incident_id`, `service`, `severity`, `status`, `started_at`, `last_seen_at`, `contributing_signals`, `confidence` (0–1), `recommended_action`, `rollback_plan` |
-| `GET /api/v1/incidents/{incident_id}/evidence` | Persisted telemetry evidence for a tenant incident | `payload_id`, `event_time`, `ingested_at`, service dimensions, metrics, security counters, and structured signals |
+| `GET /api/v1/incidents/{incident_id}/evidence` | Persisted telemetry evidence for a tenant incident | `payload_id`, `event_time`, `ingested_at`, service dimensions, metrics, security counters (or `null` when unavailable), and structured signals |
 | `GET /api/v1/collectors` | Collector connection and freshness | `collector_id`, `status`, `last_seen_at`, `last_payload_id`, `pending_count` |
 | `GET /api/v1/health` | Liveness/readiness (no auth) | `status` (`ok` or `degraded`), `version`; must not disclose secrets or tenant data |
 
@@ -80,7 +82,7 @@ Errors use `application/problem+json`:
   "title": "Validation failed",
   "status": 422,
   "code": "invalid_payload",
-  "detail": "The metadata record does not match schema version 1.0.0.",
+  "detail": "The metadata record does not match a supported schema version.",
   "request_id": "req-opaque"
 }
 ```
@@ -89,4 +91,4 @@ Expected codes include `400 invalid_json` or `https_required`, `401 unauthentica
 
 ## Schema and versioning
 
-The outbound JSON Schema uses `schema_version: "1.0.0"`, rejects unknown top-level properties, and defines bounded optional metric/security fields. Additive, backward-compatible metadata may increment the minor version only after coordination; breaking changes require a new major contract and explicit endpoint/schema migration plan. `payload_id` is a UUID generated once before queue insertion, stable across retries.
+The outbound JSON Schema accepts exactly `schema_version: "1.0.0"` and `"1.1.0"`, rejects unknown top-level properties, and defines bounded optional metric/security fields. Version 1.0.0 requires security; version 1.1.0 permits it to be absent. SaaS rejects every other version. The collector emits 1.0.0 when its internal event contains security counters and 1.1.0 when that field is absent, unless an explicit supported version is supplied; it never fills missing counters with zero. SaaS stores an absent 1.1.0 security object as an empty internal JSON object alongside the unchanged version marker and returns it as `null` with `security_status: unavailable`; partially populated supplied counters are marked `partial`. Existing v1.0.0 rows retain their stored schema version and security values; no historical record is converted. No database migration is required. `payload_id` remains a UUID generated once before queue insertion, stable across retries.

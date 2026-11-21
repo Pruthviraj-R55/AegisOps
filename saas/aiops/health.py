@@ -46,6 +46,7 @@ class HealthEvaluation:
     health_score: int  # 0 to 100
     stale: bool
     reasons: list[str] = field(default_factory=list)
+    security_status: str = "unavailable"
 
 
 def evaluate_service_health(
@@ -70,7 +71,18 @@ def evaluate_service_health(
     """
     t = thresholds or HealthThresholds()
     metrics = metrics or {}
-    security = security or {}
+    reported_security = security if isinstance(security, dict) else {}
+    supported_security_fields = ("failed_login_count", "suspicious_activity_count")
+    missing_security_fields = [
+        name for name in supported_security_fields
+        if name not in reported_security or reported_security[name] is None
+    ]
+    if not reported_security:
+        security_status = "unavailable"
+    elif missing_security_fields:
+        security_status = "partial"
+    else:
+        security_status = "available"
     reasons: list[str] = []
 
     score = 100
@@ -135,13 +147,13 @@ def evaluate_service_health(
             reasons.append(f"Packet loss detected: {loss:.1f}% (>={t.packet_loss_detected}%)")
 
     # 6. Security
-    suspicious = security.get("suspicious_activity_count", 0)
-    if suspicious and suspicious > 0:
+    suspicious = reported_security.get("suspicious_activity_count")
+    if suspicious is not None and suspicious > 0:
         score -= 30
         reasons.append(f"Suspicious activity detected: {suspicious} event(s)")
 
-    failed_logins = security.get("failed_login_count", 0)
-    if failed_logins:
+    failed_logins = reported_security.get("failed_login_count")
+    if failed_logins is not None and failed_logins > 0:
         if failed_logins >= t.failed_login_high:
             score -= 25
             reasons.append(f"High failed login attempts: {failed_logins} (>={t.failed_login_high})")
@@ -170,12 +182,17 @@ def evaluate_service_health(
         )
         score = min(score, 30)
 
+    if security_status == "unavailable":
+        reasons.append("Security telemetry is unavailable; security indicators were not assessed.")
+    elif security_status == "partial":
+        reasons.append("Some security counters are unavailable; only reported counters were assessed.")
     if not reasons:
-        reasons.append("All observed metrics and security indicators are within nominal bounds.")
+        reasons.append("Observed metrics and reported security indicators are within nominal bounds.")
 
     return HealthEvaluation(
         health=health_state,
         health_score=score,
         stale=is_stale,
         reasons=reasons,
+        security_status=security_status,
     )

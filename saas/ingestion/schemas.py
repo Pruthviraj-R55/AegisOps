@@ -1,4 +1,4 @@
-"""Strict Pydantic v2 schemas conforming to contracts/telemetry.schema.json v1.0.0."""
+"""Strict Pydantic v2 schemas conforming to telemetry contract versions 1.0.0 and 1.1.0."""
 
 from datetime import datetime
 from enum import Enum
@@ -73,7 +73,7 @@ class TelemetryPayload(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["1.0.0"]
+    schema_version: Literal["1.0.0", "1.1.0"]
     payload_id: UUID
     tenant_id: str = Field(..., min_length=1, max_length=128)
     collector_id: str = Field(..., min_length=1, max_length=128)
@@ -82,8 +82,16 @@ class TelemetryPayload(BaseModel):
     environment: str = Field(..., min_length=1, max_length=64)
     region: Optional[str] = Field(None, max_length=128)
     metrics: MetricsPayload
-    security: SecurityPayload
+    security: SecurityPayload | None = None
     health: HealthStatus
+
+    @model_validator(mode="after")
+    def validate_security_version(self) -> "TelemetryPayload":
+        if self.schema_version == "1.0.0" and self.security is None:
+            raise ValueError("schema version 1.0.0 requires security telemetry")
+        if "security" in self.model_fields_set and self.security is None:
+            raise ValueError("security must be an object when supplied")
+        return self
 
     @field_validator("event_time")
     @classmethod

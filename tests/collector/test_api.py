@@ -40,7 +40,7 @@ def _event() -> dict:
 async def test_egress_preview_is_exact_queued_json_and_contains_no_raw_values(tmp_path):
     app = create_app(_settings(str(tmp_path / "queue.sqlite3")))
     async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://collector.local") as client:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1") as client:
             event = _event()
             event["password"] = "very-private-password"
             response = await client.post("/api/v1/collector/telemetry", json=event)
@@ -56,6 +56,16 @@ async def test_egress_preview_is_exact_queued_json_and_contains_no_raw_values(tm
             assert preview["egress_review_status"] == "awaiting_review"
             assert "very-private-password" not in preview["payload_json"]
             assert preview["excluded_field_categories"]
+            assert preview["source_category"] == "development_only"
+            assert preview["schema_version"] == "1.0.0"
+            assert preview["capture_timestamp"] == "2026-11-20T12:00:00Z"
+            assert preview["metrics"] == {"cpu_percent": 20.0}
+            assert preview["security_status"] == "partial"
+            assert preview["payload_integrity_valid"] is True
+            assert set(preview["excluded_field_categories"]) <= {
+                "unsupported_fields", "credential_fields", "untrusted_identity_overrides", "raw_or_source_fields"
+            }
+            assert "password" not in json.dumps(preview["excluded_fields"])
 
             # The background sender cannot claim anything until this local approval.
             assert await app.state.collector.queue.claim_next(10**12) is None
@@ -68,7 +78,7 @@ async def test_local_api_logs_do_not_contain_raw_telemetry_or_secret(caplog, tmp
     app = create_app(_settings(str(tmp_path / "queue.sqlite3")))
     caplog.set_level(logging.INFO)
     async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://collector.local") as client:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1") as client:
             event = _event()
             event["api_key"] = "never-log-this-api-key"
             event["message"] = "password=never-log-this-password"
@@ -84,7 +94,7 @@ async def test_local_api_logs_do_not_contain_raw_telemetry_or_secret(caplog, tmp
 async def test_collector_health_and_queue_endpoints_are_local_and_descriptive(tmp_path):
     app = create_app(_settings(str(tmp_path / "queue.sqlite3")))
     async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://collector.local") as client:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1") as client:
             await client.post("/api/v1/collector/telemetry", json=_event())
             health = (await client.get("/api/v1/collector/health")).json()
             queue = (await client.get("/api/v1/collector/queue")).json()
@@ -98,7 +108,7 @@ async def test_collector_health_and_queue_endpoints_are_local_and_descriptive(tm
 async def test_local_vite_origin_is_allowed_but_not_reflected_for_other_origins(tmp_path):
     app = create_app(_settings(str(tmp_path / "queue.sqlite3")))
     async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://collector.local") as client:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1") as client:
             allowed = await client.options(
                 "/api/v1/collector/health",
                 headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "GET"},
@@ -111,10 +121,86 @@ async def test_local_vite_origin_is_allowed_but_not_reflected_for_other_origins(
     assert "access-control-allow-origin" not in denied.headers
 
 
+async def test_cross_origin_mutations_and_non_loopback_hosts_are_rejected(tmp_path):
+    app = create_app(_settings(str(tmp_path / "queue.sqlite3")))
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1") as client:
+            queued = await client.post("/api/v1/collector/telemetry", json=_event())
+            payload_id = queued.json()["payload_id"]
+            forged_approval = await client.post(
+                f"/api/v1/collector/egress-preview/{payload_id}/approve",
+                headers={"Origin": "https://attacker.example"},
+            )
+            forged_input = await client.post(
+                "/api/v1/collector/telemetry",
+                json=_event(),
+                headers={"Origin": "https://attacker.example"},
+            )
+            malformed_origin = await client.post(
+                f"/api/v1/collector/egress-preview/{payload_id}/approve",
+                headers={"Origin": "http://["},
+            )
+            rebound_host = await client.get("/api/v1/collector/egress-preview", headers={"Host": "attacker.example"})
+            item = await app.state.collector.queue.get(payload_id)
+
+    assert forged_approval.status_code == 403
+    assert forged_approval.json()["detail"] == "origin_not_allowed"
+    assert forged_input.status_code == 403
+    assert malformed_origin.status_code == 403
+    assert rebound_host.status_code == 403
+    assert item is not None and item.egress_approved is False
+
+
+async def test_allowed_frontend_origin_can_approve_and_metrics_only_preview_is_explicit(tmp_path):
+    app = create_app(_settings(str(tmp_path / "queue.sqlite3")))
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1") as client:
+            event = _event()
+            event.pop("security")
+            accepted = await client.post("/api/v1/collector/telemetry", json=event)
+            payload_id = accepted.json()["payload_id"]
+            preview = (await client.get("/api/v1/collector/egress-preview", params={"payload_id": payload_id})).json()
+            approved = await client.post(
+                f"/api/v1/collector/egress-preview/{payload_id}/approve",
+                headers={"Origin": "http://localhost:5173"},
+            )
+            item = await app.state.collector.queue.get(payload_id)
+
+    assert preview["schema_version"] == "1.1.0"
+    assert preview["security_status"] == "unavailable"
+    assert "security" not in preview["payload"]
+    assert preview["payload_json"] == item.payload_json
+    assert approved.status_code == 204
+    assert item is not None and item.egress_approved is True
+    assert item.approved_payload_sha256 == item.payload_sha256
+
+
+async def test_reject_endpoint_keeps_record_local_and_reject_cannot_be_retried(tmp_path):
+    app = create_app(_settings(str(tmp_path / "queue.sqlite3")))
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1") as client:
+            accepted = await client.post("/api/v1/collector/telemetry", json=_event())
+            payload_id = accepted.json()["payload_id"]
+            rejected = await client.post(
+                f"/api/v1/collector/queue/{payload_id}/reject",
+                headers={"Origin": "http://localhost:5173"},
+            )
+            preview = (await client.get("/api/v1/collector/egress-preview", params={"payload_id": payload_id})).json()
+            retry = await client.post(f"/api/v1/collector/queue/{payload_id}/retry")
+            item = await app.state.collector.queue.get(payload_id)
+            assert await app.state.collector.queue.claim_next(10**12) is None
+
+    assert rejected.status_code == 204
+    assert preview["egress_review_status"] == "rejected"
+    assert preview["transmission_status"] == "rejected"
+    assert retry.status_code == 404
+    assert item is not None and item.egress_approved is False and item.state == "failed"
+
+
 async def test_development_telemetry_route_is_disabled_outside_development(tmp_path):
     app = create_app(_settings(str(tmp_path / "queue.sqlite3"), environment="production"))
     async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://collector.local") as client:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1") as client:
             response = await client.post("/api/v1/collector/telemetry", json=_event())
             assert response.status_code == 404
 
@@ -124,7 +210,7 @@ async def test_ingestion_refuses_to_run_without_pseudonymization_key(tmp_path):
     settings.collector_pseudonymization_key = None
     app = create_app(settings)
     async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://collector.local") as client:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1") as client:
             response = await client.post("/api/v1/collector/telemetry", json=_event())
     assert response.status_code == 503
     assert response.json()["detail"] == "collector_privacy_configuration_missing"
@@ -133,7 +219,7 @@ async def test_ingestion_refuses_to_run_without_pseudonymization_key(tmp_path):
 async def test_preview_payload_is_json_parsable_and_same_as_payload_object(tmp_path):
     app = create_app(_settings(str(tmp_path / "queue.sqlite3")))
     async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://collector.local") as client:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1") as client:
             await client.post("/api/v1/collector/telemetry", json=_event())
             preview = (await client.get("/api/v1/collector/egress-preview")).json()
             assert json.loads(preview["payload_json"]) == preview["payload"]
@@ -166,7 +252,7 @@ async def test_complete_local_flow_requires_preview_then_delivers_exact_approved
     app = create_app(settings, service)
 
     async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://collector.local") as client:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1") as client:
             raw_event = _event()
             raw_event["password"] = "local-only-password-value"
             accepted = await client.post("/api/v1/collector/telemetry", json=raw_event)
@@ -177,6 +263,8 @@ async def test_complete_local_flow_requires_preview_then_delivers_exact_approved
             assert preview["egress_review_status"] == "awaiting_review"
             assert await queue.claim_next(10**12) is None
             assert "local-only-password-value" not in preview["payload_json"]
+            await asyncio.sleep(0.05)
+            assert received == []
 
             approved = await client.post(f"/api/v1/collector/egress-preview/{payload_id}/approve")
             assert approved.status_code == 204

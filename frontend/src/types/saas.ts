@@ -17,6 +17,7 @@ export interface ServiceItem {
   region: string | null;
   health: HealthStatus;
   health_score: number;
+  security_status?: 'available' | 'partial' | 'unavailable';
   last_event_time: string;
   stale: boolean;
   metrics: ServiceMetrics;
@@ -71,7 +72,7 @@ export interface TelemetryRecord {
   environment: string;
   region: string | null;
   metrics: ServiceMetrics;
-  security: SecurityMetrics;
+  security: SecurityMetrics | null;
   health: HealthStatus;
 }
 
@@ -109,7 +110,7 @@ export interface IncidentEvidence {
   environment: string;
   region: string | null;
   metrics: ServiceMetrics;
-  security: SecurityMetrics;
+  security: SecurityMetrics | null;
   signals: IncidentSignal[];
 }
 

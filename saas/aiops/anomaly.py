@@ -107,7 +107,7 @@ def detect_metric_anomalies(
     """
     Analyze current record against historical records to detect metric anomalies.
 
-    Records are dictionaries with 'metrics', 'security', and 'event_time'.
+    Records contain 'metrics' and 'event_time'; 'security' may be unavailable.
     """
     anomalies: list[AnomalySignal] = []
 
@@ -115,7 +115,8 @@ def detect_metric_anomalies(
     ts = parse_timestamp_to_utc(raw_time)
 
     current_metrics = current_record.get("metrics") or {}
-    current_sec = current_record.get("security") or {}
+    current_security = current_record.get("security")
+    current_sec = current_security if isinstance(current_security, dict) else {}
 
     for metric_name, conf in KEY_METRICS.items():
         if metric_name == "failed_login_count":
@@ -133,7 +134,8 @@ def detect_metric_anomalies(
         history_vals: list[float] = []
         for rec in history_records:
             m = rec.get("metrics") or {}
-            s = rec.get("security") or {}
+            record_security = rec.get("security")
+            s = record_security if isinstance(record_security, dict) else {}
             if metric_name == "failed_login_count":
                 hv = s.get("failed_login_count")
             else:
