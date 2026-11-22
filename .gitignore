@@ -32,3 +32,4 @@ Thumbs.db
 # Build / generated artifacts
 coverage/
 reports/
+-files .env
